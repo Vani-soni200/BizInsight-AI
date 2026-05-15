@@ -15,9 +15,13 @@ from openai import OpenAI
 
 # ---------- Chimera AI Client ----------
 
-api_key = os.getenv("OPENROUTER_API_KEY")
+try:
+    api_key = st.secrets["OPENROUTER_API_KEY"]
+except:
+    api_key = os.getenv("OPENROUTER_API_KEY")
+
 if not api_key:
-    raise ValueError("OPENROUTER_API_KEY environment variable not set. Please create a .env file with your API key.")
+    raise ValueError("OPENROUTER_API_KEY not found in Streamlit secrets or environment variables.")
 
 client = OpenAI(
     api_key=api_key,
@@ -95,8 +99,11 @@ if data:
     trend = df.groupby(df["date"].dt.date)["sentiment"].mean()
 
     vectorizer = CountVectorizer(stop_words="english", max_features=10)
-    X = vectorizer.fit_transform(df["review"])
-    keywords = vectorizer.get_feature_names_out()
+    try:
+        X = vectorizer.fit_transform(df["review"])
+        keywords = vectorizer.get_feature_names_out()
+    except ValueError:
+        keywords = []
 
     # ================= DASHBOARD =================
 
@@ -148,6 +155,7 @@ if data:
         if st.button("🗑 Clear all stored feedback"):
             clear_data()
             st.success("All data removed successfully.")
+            st.rerun()
 
         st.warning("This action cannot be undone.")
 
