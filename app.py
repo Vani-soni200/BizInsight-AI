@@ -15,10 +15,7 @@ from openai import OpenAI
 
 # ---------- Chimera AI Client ----------
 
-try:
-    api_key = st.secrets["OPENROUTER_API_KEY"]
-except:
-    api_key = os.getenv("OPENROUTER_API_KEY")
+api_key = st.secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
 
 if not api_key:
     raise ValueError("OPENROUTER_API_KEY not found in Streamlit secrets or environment variables.")
