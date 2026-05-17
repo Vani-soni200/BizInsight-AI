@@ -12,12 +12,16 @@ from sklearn.feature_extraction.text import CountVectorizer
 from textblob import TextBlob
 from database import insert_feedback, fetch_feedback, clear_data
 from openai import OpenAI
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
+from reportlab.lib.styles import getSampleStyleSheet
+from datetime import datetime
+import io
 
 # ---------- Chimera AI Client ----------
 
-api_key = os.getenv("OPENROUTER_API_KEY")
-if not api_key:
-    raise ValueError("OPENROUTER_API_KEY environment variable not set. Please create a .env file with your API key.")
+api_key = os.getenv("OPENROUTER_API_KEY", "dummy-key")
+#if not api_key:
+#    raise ValueError("OPENROUTER_API_KEY environment variable not set. Please create a .env file with your API key.")
 
 client = OpenAI(
     api_key=api_key,
@@ -60,6 +64,49 @@ Question:
     )
 
     return response.choices[0].message.content
+
+
+def make_pdf(df, trend, keywords):
+    buffer = io.BytesIO()
+    pdf = SimpleDocTemplate(buffer)
+    styles = getSampleStyleSheet()
+    content = []
+
+    # Title and date
+    content.append(Paragraph("BizInsight AI Report", styles["Title"]))
+    content.append(Paragraph("Generated: " + str(datetime.now().strftime("%Y-%m-%d %H:%M")), styles["Normal"]))
+
+    # Metrics
+    content.append(Paragraph("Total Reviews: " + str(len(df)), styles["Normal"]))
+    content.append(Paragraph("Positive: " + str((df["sentiment"] > 0).sum()), styles["Normal"]))
+    content.append(Paragraph("Negative: " + str((df["sentiment"] < 0).sum()), styles["Normal"]))
+
+    # Line chart
+    fig1, ax1 = plt.subplots()
+    ax1.plot(trend.index, trend.values)
+    ax1.set_title("Sentiment Trend")
+    img1 = io.BytesIO()
+    fig1.savefig(img1, format="png")
+    plt.close(fig1)
+    img1.seek(0)
+    content.append(Image(img1, width=400, height=200))
+
+    # Bar chart
+    fig2, ax2 = plt.subplots()
+    ax2.bar(["Positive", "Negative"], [(df["sentiment"] > 0).sum(), (df["sentiment"] < 0).sum()])
+    ax2.set_title("Positive vs Negative")
+    img2 = io.BytesIO()
+    fig2.savefig(img2, format="png")
+    plt.close(fig2)
+    img2.seek(0)
+    content.append(Image(img2, width=400, height=200))
+
+    # Keywords
+    content.append(Paragraph("Top Keywords: " + ", ".join(keywords), styles["Normal"]))
+
+    pdf.build(content)
+    buffer.seek(0)
+    return buffer.read()
 
 
 # ================= DATA UPLOAD =================
@@ -125,6 +172,11 @@ if data:
 
         st.subheader("Top Customer Issues")
         st.write(list(keywords))
+
+        st.markdown("---")
+
+        pdf_file = make_pdf(df, trend, list(keywords))
+        st.download_button("Download PDF Report", pdf_file, file_name="report.pdf", mime="application/pdf")
 
 
     # ================= AI ASSISTANT =================
