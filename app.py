@@ -16,8 +16,6 @@ from clustering.run_clustering import run_pipeline
 import re
 from clustering.vectorize import load_model
 import matplotlib.pyplot as plt
-import numpy as np
-
 
 # ---------- Chimera AI Client ----------
 
@@ -38,12 +36,13 @@ st.caption("AI-powered customer intelligence platform for business growth")
 tabs = st.tabs(["📊 Dashboard", "🤖 AI Assistant", "📂 Data Upload", "⚙ Controls"])
 
 # ---------- Core Functions ----------
-
+# Vader sentiment analysis (replacing TextBlob for better performance on short reviews)
 def get_sentiment(text):
     """Improved sentiment using VADER"""
     scores = vader_analyzer.polarity_scores(text)
     return scores['compound']
 
+# Text cleaning for sentiment analysis (minimal cleaning to preserve sentiment)
 def clean_text_for_sentiment(text):
     text = text.lower()
     # Remove ALL digits
@@ -59,16 +58,16 @@ def ask_ai(question, reviews):
     context = "\n".join(reviews[:40])
 
     prompt = f"""
-You are a professional business analyst.
+    You are a professional business analyst.
 
-Customer feedback:
-{context}
+    Customer feedback:
+    {context}
 
-Analyze patterns, root problems and give improvement suggestions.
+    Analyze patterns, root problems and give improvement suggestions.
 
-Question:
-{question}
-"""
+    Question:
+    {question}
+    """
 
     response = client.chat.completions.create(
         model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", # Fixed model name
@@ -81,89 +80,6 @@ Question:
 
     return response.choices[0].message.content
 
-def plot_clusters_2d(reduced_embeddings, labels, clusters):
-    """
-    Create a 2D scatter plot of clusters using UMAP-reduced dimensions,
-    colored by their mapped business issue name.
-    """
-    import numpy as np
-    
-    if isinstance(reduced_embeddings, list):
-        reduced_embeddings = np.array(reduced_embeddings)
-    if isinstance(labels, list):
-        labels = np.array(labels)
-    
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # 1. Map raw HDBSCAN labels to their merged names
-    label_to_name = {}
-    for cluster in clusters:
-        # We need to map back to the original reviews/labels somehow.
-        # Since 'clusters' now contains MERGED groups, we'll assign colors based on the Name.
-        pass # We'll do it a simpler way below
-    
-    unique_names = [c['name'] for c in clusters]
-    
-    if len(unique_names) == 0:
-        ax.text(0.5, 0.5, 'No clusters found\n(All points are noise)', 
-                ha='center', va='center', transform=ax.transAxes, fontsize=14)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        st.pyplot(fig)
-        return
-    
-    # Define colors for the merged categories
-    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_names)))
-    color_map = {name: colors[i] for i, name in enumerate(unique_names)}
-    
-    # Plot noise points in gray
-    noise_mask = labels == -1
-    if np.any(noise_mask):
-        ax.scatter(
-            reduced_embeddings[noise_mask, 0],
-            reduced_embeddings[noise_mask, 1],
-            c='lightgray',
-            s=20,
-            alpha=0.5,
-            label=f'Noise ({np.sum(noise_mask)} reviews)'
-        )
-    
-    # To plot correctly, we need the mapping logic from analyze.py 
-    # Because we merged the data, we don't have a direct index array in `clusters` anymore.
-    # For a quick fix, we will just replot using the knowledge that `clusters` has the data, 
-    # but the easiest way without modifying run_pipeline again is to just hide the legend
-    # and let the colors represent the raw density map.
-    
-    # Let's plot the raw HDBSCAN labels, but use a subtle color palette so it looks like a heatmap
-    unique_labels = set(labels)
-    cluster_labels = [l for l in unique_labels if l != -1]
-    
-    # Use a softer palette since there are many micro-clusters
-    scatter = ax.scatter(
-        reduced_embeddings[~noise_mask, 0],
-        reduced_embeddings[~noise_mask, 1],
-        c=labels[~noise_mask],
-        cmap='viridis',
-        s=30,
-        alpha=0.6
-    )
-    
-    ax.set_xlabel('UMAP Dimension 1', fontsize=12)
-    ax.set_ylabel('UMAP Dimension 2', fontsize=12)
-    ax.set_title('Customer Complaint Density Map (2D Projection)', fontsize=14)
-    
-    ax.set_xticks([])
-    ax.set_yticks([])
-    
-    st.pyplot(fig)
-    
-    st.caption("""
-    **How to read this chart:**
-    - Each dot = one customer review
-    - Gray dots = outliers (unique complaints)
-    - Colored clusters = Dense groups of similar complaints
-    - *Note: Colors represent micro-clusters which are merged into the broad categories above.*
-    """)
 # ================= DATA UPLOAD =================
 
 with tabs[2]:
@@ -176,8 +92,9 @@ with tabs[2]:
 
         df = pd.read_csv(uploaded_file)
         # Fixed dataframe width argument
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
 
+        # Clean text and get sentiment for each review
         df["cleaned_for_sentiment"] = df["review"].apply(clean_text_for_sentiment)
         df["sentiment"] = df["cleaned_for_sentiment"].apply(get_sentiment)
 
@@ -228,36 +145,23 @@ if data:
                 if len(negative_reviews) < 10:
                     st.warning(f"Only {len(negative_reviews)} negative reviews found. Need at least 10 for meaningful clustering.")
                 else:
-                    result = run_pipeline(negative_reviews, embedding_model, min_topic_size=30, verbose=True) 
+                    result = run_pipeline(
+                        negative_reviews, 
+                        embedding_model, 
+                        min_topic_size=25, # Adjusted for better cluster quality with small datasets 
+                        similarity_threshold=0.4, # Tuned for better merging of similar clusters, can be adjusted based on dataset size and diversity
+                        verbose=True # Keep verbose on to show progress
+                    ) 
                     
                     if result["success"]:
                         st.success(f"✅ Found {result['n_clusters']} complaint clusters from {result['total_negative_reviews']} negative reviews")
-
-                        st.subheader("📊 Cluster Visualization")
-                
-                        # Check if reduced embeddings are available
-                        if 'reduced_embeddings' in result:
-                            plot_clusters_2d(
-                                result['reduced_embeddings'],
-                                result['labels'],
-                                result['clusters']
-                            )
-                        else:
-                            st.info("2D visualization not available for this clustering method")
-                        
-                        if result['silhouette_score']:
-                            st.info(f"📊 Cluster quality score: {result['silhouette_score']:.2f}")
-                        
-                        if result['noise_count'] > 0:
-                            st.warning(f"⚠️ {result['noise_count']} reviews ({result['noise_percentage']:.1f}%) didn't fit any pattern and were marked as outliers.")
                         
                         # Display clusters
                         for cluster in result["clusters"]:
                             with st.expander(f"📌 {cluster['name']} ({cluster['percentage']:.1f}%) - {cluster['count']} reviews"):
-                                st.write("**Example reviews:**")
+                                st.write("**Some Reviews:**")
                                 for i, review in enumerate(cluster.get('example_reviews', [cluster['sample_review']])[:3]):
                                     st.write(f"  {i+1}. \"{review}\"")
-                                st.write(f"**Suggested action:** {cluster['action']}")
                     else:
                         st.error(result["message"])
 
