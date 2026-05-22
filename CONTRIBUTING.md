@@ -194,7 +194,7 @@ refactor(pdf_generator): extract summary logic into helper function
 
 ### PR Review Criteria
 
-- PRs are reviewed within **3–5 business days**
+- Maintainers aim to review PRs within **3–5 business days**
 - At least **1 maintainer approval** is required before merging
 - Resolve all review comments before re-requesting a review
 - Do not force-push to a PR branch after review has started
