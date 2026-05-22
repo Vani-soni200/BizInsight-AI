@@ -1,13 +1,8 @@
 import os
-import tempfile
-from pdf_generator import create_pdf
 from dotenv import load_dotenv
-
 load_dotenv()
-
 import streamlit as st
 st.set_page_config(page_title="BizInsight AI", layout="wide")
-
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import CountVectorizer
@@ -18,15 +13,16 @@ from openai import OpenAI
 
 # ---------- Chimera AI Client ----------
 
-api_key = st.secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+api_key = os.getenv("OPENROUTER_API_KEY")
 
 if not api_key:
-    raise ValueError("OPENROUTER_API_KEY not found in Streamlit secrets or environment variables.")
-
-client = OpenAI(
-    api_key=api_key,
-    base_url="https://openrouter.ai/api/v1"
-)
+    st.warning("OPENROUTER_API_KEY not found. AI Assistant features will be disabled.")
+    client = None
+else:
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1"
+    )
 
 st.title("📊 BizInsight AI")
 st.caption("AI-powered customer intelligence platform for business growth")
@@ -41,6 +37,78 @@ tabs = st.tabs(["📊 Dashboard", "🤖 AI Assistant", "📂 Data Upload", "⚙ 
 
 def get_sentiment(text):
     return TextBlob(text).sentiment.polarity
+
+
+# ================= AI ASSISTANT =================
+
+with tabs[1]:
+
+    st.subheader("🤖 AI Business Assistant")
+
+    question = st.text_area(
+        "Ask business insights question",
+        placeholder="Example: What are the major customer complaints?"
+    )
+
+    if st.button("Generate AI Insight"):
+
+        if client is None:
+            st.warning("AI features unavailable because API key is missing.")
+
+        elif question.strip() == "":
+            st.warning("Please enter a question.")
+
+        else:
+
+            data = fetch_feedback()
+
+            if not data:
+                st.warning("No feedback data available.")
+
+            else:
+
+                df_ai = pd.DataFrame(
+                    data,
+                    columns=["review", "sentiment", "date"]
+                )
+
+                reviews_text = "\n".join(df_ai["review"].astype(str).tolist())
+
+                prompt = f"""
+You are a business intelligence assistant.
+
+Customer reviews:
+{reviews_text}
+
+Question:
+{question}
+"""
+
+                try:
+
+                    response = client.chat.completions.create(
+                        model="tngtech/deepseek-r1t2-chimera:free",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You provide business intelligence insights."
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        temperature=0.4
+                    )
+
+                    answer = response.choices[0].message.content
+
+                    st.success("AI Insight Generated")
+                    st.write(answer)
+
+                except Exception as e:
+                    st.error(f"Error generating AI response: {str(e)}")
+
 
 # ================= DATA UPLOAD =================
 
@@ -57,7 +125,7 @@ with tabs[2]:
 
         df = pd.read_csv(uploaded_file)
 
-        st.dataframe(df, width='stretch')
+        st.dataframe(df, use_container_width=True)
 
         if "review" not in df.columns:
             st.error("CSV must contain a 'review' column.")
@@ -70,7 +138,9 @@ with tabs[2]:
             df = df[df["review"] != ""]
 
             if df.empty:
-                st.warning("No valid reviews found after cleaning. Nothing to process.")
+
+                st.warning("No valid reviews found after cleaning.")
+
 
             else:
 
@@ -98,21 +168,26 @@ if data:
     df["date"] = pd.to_datetime(df["date"])
 
     # Sentiment Counts
+
     positive = (df["sentiment"] > 0).sum()
     negative = (df["sentiment"] < 0).sum()
     neutral = (df["sentiment"] == 0).sum()
 
     total_reviews = len(df)
 
-    # Sentiment Percentages
+    # Percentages
+
     positive_percent = round((positive / total_reviews) * 100, 2)
     negative_percent = round((negative / total_reviews) * 100, 2)
     neutral_percent = round((neutral / total_reviews) * 100, 2)
 
-    # Trend Analysis
+    # Trend
+
     trend = df.groupby(df["date"].dt.date)["sentiment"].mean()
 
     # Keyword Extraction
+
+    # Keywords
 
     reviews = df["review"].dropna()
 
@@ -166,38 +241,8 @@ if data:
 
         st.markdown("---")
 
-        # Create chart first
-        fig, ax = plt.subplots(figsize=(4,4))
+        # Trend Chart
 
-        ax.bar(
-            ["Positive", "Negative"],
-            [positive, negative]
-        )
-
-        plt.tight_layout()
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-            chart_path = tmpfile.name
-
-            fig.savefig(chart_path)
-
-        if st.button("Generate PDF Report"):
-
-            pdf_path = create_pdf(
-                len(df),
-                positive,
-                negative,
-                chart_path
-            )
-
-            with open(pdf_path, "rb") as pdf_file:
-
-                st.download_button(
-                    label="Download Report",
-                    data=pdf_file,
-                    file_name="bizinsight_report.pdf",
-                    mime="application/pdf"
-                )
 
         col1, col2 = st.columns([2,1])
 
@@ -208,7 +253,8 @@ if data:
 
         with col2:
 
-            fig3, ax3 = plt.subplots()
+            fig3, ax3 = plt.subplots(figsize=(3.2, 3.2))
+
 
             ax3.pie(
                 [positive, negative, neutral],
@@ -221,22 +267,28 @@ if data:
 
             st.markdown("---")
 
+        # Histogram
+
         st.subheader("📊 Sentiment Score Distribution")
 
-        col3, col4 = st.columns([1,2])
+        col_small, _ = st.columns([1.5, 4])
 
-        with col3:
+        with col_small:
 
-            fig2, ax2 = plt.subplots(figsize=(2.5,1.8))
+            fig2, ax2 = plt.subplots(figsize=(2.8, 2.1))
 
             ax2.hist(df["sentiment"], bins=10)
 
-            ax2.set_xlabel("Sentiment Score")
-            ax2.set_ylabel("Frequency")
+            ax2.set_xlabel("Score", fontsize=8)
+            ax2.set_ylabel("Freq", fontsize=8)
+
+            ax2.tick_params(axis='both', labelsize=7)
 
             st.pyplot(fig2)
 
         st.markdown("---")
+
+        # Keywords
 
         st.subheader("Top Customer Issues / Keywords")
 
