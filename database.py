@@ -32,14 +32,14 @@ def initialize_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             review TEXT NOT NULL,
             sentiment REAL NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT
         )
         """)
 
         conn.commit()
 
 
-def insert_feedback(review, sentiment):
+def insert_feedback(review, sentiment, created_at):
 
     # Handle None / NaN / empty reviews safely
     if review is None or str(review).strip() == "":
@@ -52,10 +52,10 @@ def insert_feedback(review, sentiment):
 
             cursor.execute(
                 """
-                INSERT INTO feedback (review, sentiment)
-                VALUES (?, ?)
+                INSERT INTO feedback (review, sentiment, created_at)
+                VALUES (?, ?, ?)
                 """,
-                (str(review), sentiment)
+                (str(review), sentiment, created_at)
             )
 
             conn.commit()

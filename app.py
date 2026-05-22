@@ -12,12 +12,18 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import CountVectorizer
 from textblob import TextBlob
-from database import insert_feedback, fetch_feedback, clear_data
+from database import (
+    insert_feedback,
+    fetch_feedback,
+    clear_data,
+    initialize_database
+)
+initialize_database()
 from openai import OpenAI
 
 # ---------- Chimera AI Client ----------
 
-api_key = st.secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+api_key = os.getenv("OPENROUTER_API_KEY")
 
 if not api_key:
     raise ValueError("OPENROUTER_API_KEY not found in Streamlit secrets or environment variables.")
@@ -78,6 +84,10 @@ with tabs[2]:
 
     if uploaded_file:
         df = pd.read_csv(uploaded_file)
+        if "date" not in df.columns:
+            st.error("CSV must contain a 'date' column.")
+            st.stop()
+        df["date"] = pd.to_datetime(df["date"])
         st.dataframe(df, width='stretch')
         if "review" not in df.columns:
             st.error("CSV must contain a 'review' column.")
@@ -96,7 +106,11 @@ with tabs[2]:
 
                 
                 for _, row in df.iterrows():
-                    insert_feedback(row["review"], row["sentiment"])
+                    insert_feedback(
+                        row["review"],
+                        row["sentiment"],
+                        row["date"].strftime("%Y-%m-%d")
+                    )
                     inserted_count += 1
 
                 st.success(f"{inserted_count} feedback entries successfully added!")
@@ -108,12 +122,53 @@ data = fetch_feedback()
 
 if data:
     df = pd.DataFrame(data, columns=["review", "sentiment", "date"])
+
     df["date"] = pd.to_datetime(df["date"])
 
     positive = (df["sentiment"] > 0).sum()
     negative = (df["sentiment"] < 0).sum()
 
+    # Existing sentiment trend
     trend = df.groupby(df["date"].dt.date)["sentiment"].mean()
+
+    # =========================================
+    # NEGATIVE REVIEW SPIKE DETECTION
+    # =========================================
+
+    # Only negative reviews
+    negative_df = df[df["sentiment"] < 0]
+
+    # Daily negative review counts
+    negative_trend = (
+        negative_df
+        .groupby(negative_df["date"].dt.date)
+        .size()
+    )
+
+    # Rolling statistics
+    rolling_mean = negative_trend.rolling(window=3).mean()
+
+    rolling_std = negative_trend.rolling(window=3).std()
+
+    # Threshold-based anomaly detection
+    
+    anomalies = negative_trend[
+        negative_trend > (rolling_mean + rolling_std)
+    ]
+
+    st.write("Negative Trend")
+    st.write(negative_trend)
+    
+    st.write("Rolling Mean")
+    st.write(rolling_mean)
+    
+    st.write("Rolling Std")
+    st.write(rolling_std)
+    
+    st.write("Detected Anomalies")
+    st.write(anomalies)
+
+    # =========================================
 
     reviews = df["review"].dropna()
 
@@ -137,6 +192,11 @@ if data:
 
     with tabs[0]:
         st.subheader("📈 Business Health Overview")
+
+        if not anomalies.empty:
+            st.error(
+                f"⚠️ {len(anomalies)} negative sentiment spike(s) detected!"
+            )
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Reviews", len(df))
@@ -176,8 +236,34 @@ if data:
         col1, col2 = st.columns([2,1])
 
         with col1:
-            st.subheader("Customer Satisfaction Trend")
-            st.line_chart(trend)
+            st.subheader("Negative Review Spike Detection")
+            
+            fig2, ax2 = plt.subplots(figsize=(10,4))
+            
+            # Main negative trend line
+            ax2.plot(
+                negative_trend.index,
+                negative_trend.values,
+                marker="o"
+            )
+            
+            # Highlight anomalies
+            ax2.scatter(
+                anomalies.index,
+                anomalies.values,
+                color="red",
+                s=220,
+                marker="X",
+                label="Anomaly"
+            )
+            
+            ax2.legend()
+            
+            ax2.set_xlabel("Date")
+            ax2.set_ylabel("Negative Reviews")
+            ax2.set_title("Anomaly Detection in Negative Reviews")
+            
+            st.pyplot(fig2)
 
         with col2:
             st.pyplot(fig)
