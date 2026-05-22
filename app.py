@@ -78,14 +78,28 @@ with tabs[2]:
 
     if uploaded_file:
         df = pd.read_csv(uploaded_file)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width='stretch')
+        if "review" not in df.columns:
+            st.error("CSV must contain a 'review' column.")
+        else:
+            df = df.dropna(subset=["review"])
 
-        df["sentiment"] = df["review"].apply(get_sentiment)
+            df["review"] = df["review"].astype(str).str.strip()
+            df = df[df["review"] != ""]
 
-        for _, row in df.iterrows():
-            insert_feedback(row["review"], row["sentiment"])
+            if df.empty:
+                st.warning("No valid reviews found after cleaning. Nothing to process.")
+            else:
+                df["sentiment"] = df["review"].apply(get_sentiment)
 
-        st.success("Feedback successfully added!")
+                inserted_count = 0
+
+                
+                for _, row in df.iterrows():
+                    insert_feedback(row["review"], row["sentiment"])
+                    inserted_count += 1
+
+                st.success(f"{inserted_count} feedback entries successfully added!")
 
 
 # ================= LOAD STORED DATA =================
