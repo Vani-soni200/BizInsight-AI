@@ -58,26 +58,6 @@ def no_users_exist():
         count = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         return count == 0
 
-        # Migration: add user_id to existing feedback table if missing
-        try:
-            cursor.execute("ALTER TABLE feedback ADD COLUMN user_id INTEGER REFERENCES users(id)")
-            conn.commit()
-            logger.info("Migrated feedback table: added user_id column.")
-        except sqlite3.OperationalError:
-            pass  # column already exists
-
-        # Seed default admin if none exists
-        admin = cursor.execute("SELECT id FROM users WHERE role = 'admin'").fetchone()
-        if not admin:
-            hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
-            cursor.execute(
-                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                ("admin", hashed, "admin")
-            )
-            logger.warning("Default admin created — username: admin, password: admin123. Change this immediately.")
-
-        conn.commit()
-
 
 # ─── User Functions ───────────────────────────────────────────────────────────
 
@@ -168,6 +148,20 @@ def insert_feedback(review, sentiment, user_id):
     except sqlite3.Error as e:
         logger.error(f"Insert Error: {e}")
         raise sqlite3.Error(f"Insert Error: {e}")
+    
+def insert_feedback_bulk(reviews_data, user_id):   
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                "INSERT INTO feedback (review, sentiment, user_id) VALUES (?, ?, ?)",
+                [(review, sentiment, user_id) for review, sentiment in reviews_data]
+            )
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logger.error(f"Bulk Insert Error: {e}")
+        raise sqlite3.Error(f"Bulk Insert Error: {e}")
 
 
 def fetch_feedback(user_id):

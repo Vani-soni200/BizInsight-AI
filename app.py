@@ -1,4 +1,5 @@
 import os
+import hashlib
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -15,6 +16,7 @@ from openai import OpenAI
 from database import (
     initialize_database,
     insert_feedback,
+    insert_feedback_bulk,
     fetch_feedback,
     fetch_all_feedback,
     fetch_all_users,
@@ -39,6 +41,17 @@ if not is_logged_in():
     st.stop()
 
 current_user = get_current_user()
+
+# ─── OpenAI Client ───────────────────────────────────────────────────────────
+
+@st.cache_resource
+def get_ai_client():
+    api_key = os.getenv("OPENROUTER_API_KEY")   
+    if not api_key:
+        return None
+    return OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+
+client = get_ai_client() 
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 
@@ -78,9 +91,8 @@ with tabs[1]:
     )
 
     if st.button("Generate AI Insight"):
-        api_key = os.getenv("OPENROUTER_API_KEY")
 
-        if not api_key:
+        if client is None:
             st.warning("AI features unavailable because API key is missing.")
         elif question.strip() == "":
             st.warning("Please enter a question.")
@@ -103,7 +115,6 @@ Question:
 {question}
 """
                 try:
-                    client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
                     response = client.chat.completions.create(
                         model="tngtech/deepseek-r1t2-chimera:free",
                         messages=[
@@ -126,7 +137,6 @@ with tabs[2]:
     uploaded_file = st.file_uploader("Upload CSV with review column", type="csv")
 
     if uploaded_file:
-        import hashlib
         file_hash = hashlib.md5(uploaded_file.getvalue()).hexdigest()
 
         if st.session_state.get("last_upload_hash") != file_hash:
@@ -145,13 +155,11 @@ with tabs[2]:
                 else:
                     df["sentiment"] = df["review"].apply(get_sentiment)
 
-                    inserted_count = 0
-                    for _, row in df.iterrows():
-                        insert_feedback(row["review"], row["sentiment"], user_id=current_user["id"])
-                        inserted_count += 1
+                    reviews_data = list(zip(df["review"], df["sentiment"]))
+                    insert_feedback_bulk(reviews_data, user_id=current_user["id"])
 
                     st.session_state["last_upload_hash"] = file_hash
-                    st.success(f"{inserted_count} feedback entries successfully added!")
+                    st.success(f"{len(df)} feedback entries successfully added!")
         else:
             st.info("This file has already been uploaded in this session.")
 
