@@ -5,4 +5,5 @@ scikit-learn
 textblob
 openai
 python-dotenv
+bcrypt
 fpdf
