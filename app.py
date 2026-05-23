@@ -1,6 +1,9 @@
 import os
+import logging
 from dotenv import load_dotenv
 load_dotenv()
+logging.basicConfig(level=logging.ERROR)
+logger = logging.getLogger(__name__)
 import streamlit as st
 st.set_page_config(page_title="BizInsight AI", layout="wide")
 import pandas as pd
@@ -107,7 +110,18 @@ Question:
                     st.write(answer)
 
                 except Exception as e:
-                    st.error(f"Error generating AI response: {str(e)}")
+                    logger.exception("AI API request failed")
+                    error_message = "Unable to generate AI insight at the moment."
+                    error_text = str(e).lower()
+                    if "401" in error_text or "authentication" in error_text:
+                        error_message = "Authentication failed. Please check API configuration."
+                    elif "429" in error_text or "rate limit" in error_text:
+                        error_message = "Rate limit exceeded. Please try again later."
+                    elif "timeout" in error_text:
+                        error_message = "Request timed out. Please retry."
+                    elif "connection" in error_text:
+                        error_message = "Network connection issue. Please check connectivity."
+                    st.error(error_message)
 
 
 # ================= DATA UPLOAD =================
@@ -271,15 +285,19 @@ if data:
         with col_small:
 
             fig2, ax2 = plt.subplots(figsize=(2.8, 2.1))
-
+            
             ax2.hist(df["sentiment"], bins=10)
-
+            
             ax2.set_xlabel("Score", fontsize=8)
+            
             ax2.set_ylabel("Freq", fontsize=8)
-
+            
             ax2.tick_params(axis='both', labelsize=7)
-
+            
             st.pyplot(fig2)
+            # Cleanup matplotlib figure from memory
+            
+            plt.close(fig2)
 
         st.markdown("---")
 
