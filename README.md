@@ -11,6 +11,7 @@ Built as a real-world business intelligence tool using Python, Streamlit, and ad
 - Upload customer feedback CSV files  
 - Automatic sentiment analysis  
 - **Smart complaint clustering** – automatically groups negative reviews into business‑relevant categories (Payment, Delivery, Technical, Account, Product Quality, Customer Service, etc.)  
+**Website integration chatbot** – embeddable widget that answers customer questions based on your reviews. 
 - Trend tracking over time  
 - Top issue detection  
 - AI-powered business assistant  
@@ -36,11 +37,11 @@ Built as a real-world business intelligence tool using Python, Streamlit, and ad
 - Pandas, Matplotlib  
 - Scikit-learn  
 - **VADER** (sentiment analysis)  
-- **HDBSCAN** + **UMAP** (density‑based clustering)  
-- **Sentence‑Transformers** (`all-MiniLM-L6-v2`)  
+- **BERTopic** + **HDBSCAN** + **UMAP** (clustering)  
+- **Sentence‑Transformers** (`all-mpnet-base-v2`)  
 - **LangChain** (RAG pipeline)  
 - **ChromaDB** (vector database)  
-- **FastAPI** (RAG backend API)  
+- **FastAPI** (RAG backend)  
 - **OpenRouter** (LLM gateway, Google Gemini)  
 - SQLite  
 
@@ -156,10 +157,63 @@ python-dotenv
 openai
 requests
 
+---
+
+## 📥 Installation & Setup
+
+Follow these steps to set up the project locally on your machine.
+
+### 1. Clone the Repository
+Open your terminal and run:
+```bash
+git clone https://github.com/Prateekiiitg56/BizInsight-AI.git
+cd BizInsight-AI
+```
+
+### 2. Set Up a Virtual Environment
+Choose **one** of the options below to isolate your project dependencies.
+
+#### Option A: Using Standard Python (venv)
+* **Create the environment:**
+  ```bash
+  python -m venv venv
+  ```
+* **Activate the environment:**
+  * **Windows:**
+    ```bash
+    venv\Scripts\activate
+    ```
+  * **macOS / Linux:**
+    ```bash
+    source venv/bin/activate
+    ```
+
+#### Option B: Using Anaconda (conda)
+* **Create and activate the environment:**
+  ```bash
+  conda create --name BizInsight-AI-env python=3.10 -y
+  conda activate BizInsight-AI-env
+  ```
+
+### 3. Install Dependencies
+Once your virtual environment is active, install the required packages:
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Run the Application
+Start the Streamlit dashboard:
+```bash
+streamlit run app.py
+```
+
+---
+
 ## 📄 CSV Format
 
 Your CSV file must contain a column named `review`.
 
+---
 
 ## 📈 Example Use Cases
 
@@ -167,7 +221,7 @@ Your CSV file must contain a column named `review`.
 - Service quality monitoring  
 - Product feedback insights  
 - Business performance improvement  
-
+  
 ---
 
 ## 🏆 Why BizInsight AI?

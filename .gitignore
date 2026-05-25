@@ -20,3 +20,4 @@ venv/
 models/finetuned_complaint_model_final/
 
 chroma_db/
+.streamlit/secrets.toml
