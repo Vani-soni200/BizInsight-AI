@@ -72,10 +72,14 @@ with tabs[1]:
                     columns=["review", "sentiment", "date"]
                 )
 
-                reviews_text = "\n".join(df_ai["review"].astype(str).tolist())
+                MAX_REVIEWS_FOR_AI = 200
+                total_reviews_count = len(df_ai)
+                sampled_reviews = df_ai["review"].astype(str).tolist()[-MAX_REVIEWS_FOR_AI:]
+                reviews_text = "\n".join(sampled_reviews)
 
                 prompt = f"""
 You are a business intelligence assistant.
+Analysing a sample of {len(sampled_reviews)} most recent reviews (out of {total_reviews_count} total).
 
 Customer reviews:
 {reviews_text}
