@@ -28,6 +28,8 @@ else:
 
 vader_analyzer = SentimentIntensityAnalyzer()
 
+vader_analyzer = SentimentIntensityAnalyzer()
+
 st.title("📊 BizInsight AI")
 st.caption("AI-powered customer intelligence platform for business growth")
 
@@ -58,29 +60,32 @@ Customer reviews:
     {question}
     """
 
-    try:
-        response = client.chat.completions.create(
-            model="tngtech/deepseek-r1t2-chimera:free",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You provide business intelligence insights."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.4
-        )
+                try:
 
-        answer = response.choices[0].message.content
+                    response = client.chat.completions.create(
+                        model="tngtech/deepseek-r1t2-chimera:free",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You provide business intelligence insights."
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        temperature=0.4
+                    )
 
-        st.success("AI Insight Generated")
-        st.write(answer)
+                    answer = response.choices[0].message.content
 
-    except Exception as e:
-        st.error(f"Error generating AI response: {str(e)}")
+                    st.success("AI Insight Generated")
+                    st.write(answer)
+
+                except Exception as e:
+                    st.error(f"Error generating AI response: {str(e)}")
+
+# ================= DATA UPLOAD =================
 
 # ================= DATA UPLOAD =================
 with tabs[2]:
@@ -134,27 +139,21 @@ if data:
     # DataFrame columns: original_review, cleaned_review, sentiment, date
     df = pd.DataFrame(data, columns=["original_review", "cleaned_review", "sentiment", "date"])
     df["date"] = pd.to_datetime(df["date"])
-    
-    # Sentiment classification (-0.1 to 0.1 threshold for neutral)
-    positive = (df["sentiment"] > 0.1).sum()
-    neutral = ((df["sentiment"] >= -0.1) & (df["sentiment"] <= 0.1)).sum()
-    negative = (df["sentiment"] < -0.1).sum()
+
+    positive = (df["sentiment"] > 0).sum()
+    negative = (df["sentiment"] < 0).sum()
+    neutral = (df["sentiment"] == 0).sum()
     total = len(df)
 
-    # Percentages
-    pos_pct = round((positive / total) * 100, 2)
-    neg_pct = round((negative / total) * 100, 2)
-    neu_pct = round((neutral / total) * 100, 2)
+    pos_pct = round(positive / total * 100, 2)
+    neg_pct = round(negative / total * 100, 2)
+    neu_pct = round(neutral / total * 100, 2)
 
     trend = df.groupby(df["date"].dt.date)["sentiment"].mean()
 
     # Keyword extraction on cleaned reviews
     reviews_clean = df["cleaned_review"].dropna()
-    
-    if reviews_clean.empty or (
-        reviews_clean.apply(lambda x: isinstance(x, str)).all() and
-        reviews_clean.str.strip().eq("").all()
-    ):
+    if reviews_clean.empty:
         keywords = []
         freq = []
     else:
