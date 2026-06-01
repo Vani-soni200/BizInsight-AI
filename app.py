@@ -14,6 +14,11 @@ st.set_page_config(page_title="BizInsight AI", layout="wide")
 
 from sklearn.feature_extraction.text import CountVectorizer
 from openai import OpenAI
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
+from reportlab.lib.styles import getSampleStyleSheet
+from datetime import datetime
+import io
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from clustering.run_clustering import run_pipeline
@@ -110,6 +115,79 @@ def ask_ai(question, reviews):
 
 Customer reviews:
 {context}
+
+    Question:
+    {question}
+    """
+
+                try:
+
+                    response = client.chat.completions.create(
+                        model="tngtech/deepseek-r1t2-chimera:free",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You provide business intelligence insights."
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        temperature=0.4
+                    )
+
+                    answer = response.choices[0].message.content
+
+                    st.success("AI Insight Generated")
+                    st.write(answer)
+
+                except Exception as e:
+                    st.error(f"Error generating AI response: {str(e)}")
+
+
+def make_pdf(df, trend, keywords):
+    buffer = io.BytesIO()
+    pdf = SimpleDocTemplate(buffer)
+    styles = getSampleStyleSheet()
+    content = []
+
+    # Title and date
+    content.append(Paragraph("BizInsight AI Report", styles["Title"]))
+    content.append(Paragraph("Generated: " + str(datetime.now().strftime("%Y-%m-%d %H:%M")), styles["Normal"]))
+
+    # Metrics
+    content.append(Paragraph("Total Reviews: " + str(len(df)), styles["Normal"]))
+    content.append(Paragraph("Positive: " + str((df["sentiment"] > 0).sum()), styles["Normal"]))
+    content.append(Paragraph("Negative: " + str((df["sentiment"] < 0).sum()), styles["Normal"]))
+
+    # Line chart
+    fig1, ax1 = plt.subplots()
+    ax1.plot(trend.index, trend.values)
+    ax1.set_title("Sentiment Trend")
+    img1 = io.BytesIO()
+    fig1.savefig(img1, format="png")
+    plt.close(fig1)
+    img1.seek(0)
+    content.append(Image(img1, width=400, height=200))
+
+    # Bar chart
+    fig2, ax2 = plt.subplots()
+    ax2.bar(["Positive", "Negative"], [(df["sentiment"] > 0).sum(), (df["sentiment"] < 0).sum()])
+    ax2.set_title("Positive vs Negative")
+    img2 = io.BytesIO()
+    fig2.savefig(img2, format="png")
+    plt.close(fig2)
+    img2.seek(0)
+    content.append(Image(img2, width=400, height=200))
+
+    # Keywords
+    content.append(Paragraph("Top Keywords: " + ", ".join(keywords), styles["Normal"]))
+
+    pdf.build(content)
+    buffer.seek(0)
+    return buffer.read()
+
 
 Question:
 {question}
@@ -243,12 +321,66 @@ if data:
             st.subheader("Customer Satisfaction Trend")
             st.area_chart(trend)
         with col2:
+
+            fig3, ax3 = plt.subplots(figsize=(3.2, 3.2))
+
             fig3, ax3 = plt.subplots(figsize=(3.2, 3.2))
             ax3.pie(
                 [positive, negative, neutral],
                 labels=["Positive", "Negative", "Neutral"],
                 autopct="%1.1f%%"
             )
+
+            st.pyplot(fig3)
+            plt.close(fig3)
+
+            st.markdown("---")
+
+        st.markdown("---")
+
+        pdf_file = make_pdf(df, trend, list(keywords))
+        st.download_button("Download PDF Report", pdf_file, file_name="report.pdf", mime="application/pdf")
+
+        # Histogram
+
+        st.subheader("📊 Sentiment Score Distribution")
+
+        col_small, _ = st.columns([1.5, 4])
+
+        with col_small:
+
+            fig2, ax2 = plt.subplots(figsize=(2.8, 2.1))
+
+            ax2.hist(df["sentiment"], bins=10)
+
+            ax2.set_xlabel("Score", fontsize=8)
+            ax2.set_ylabel("Freq", fontsize=8)
+
+            ax2.tick_params(axis='both', labelsize=7)
+
+            st.pyplot(fig2)
+
+        st.markdown("---")
+
+        csv_data = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="⬇️ Download Feedback as CSV",
+            data=csv_data,
+            file_name="bizinsight_feedback.csv",
+            mime="text/csv"
+        )
+            fig, ax = plt.subplots()
+            ax.pie([positive, negative, neutral], labels=["Positive","Negative","Neutral"], autopct="%1.1f%%")
+            st.pyplot(fig)
+            plt.close(fig)
+
+        st.subheader("📊 Sentiment Distribution")
+        fig2, ax2 = plt.subplots()
+        ax2.hist(df["sentiment"], bins=20)
+        ax2.set_xlabel("Sentiment Score")
+        ax2.set_ylabel("Frequency")
+        st.pyplot(fig2)
+        plt.close(fig2)
             st.pyplot(fig3)
             plt.close(fig3)
 
