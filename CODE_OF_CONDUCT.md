@@ -71,9 +71,8 @@ an appointed representative at an online or offline event.
 If you experience or witness unacceptable behavior, please report it by:
 
 - Contacting the project maintainer directly via email at:
-  prateekiiitg56@gmail.com (or check maintainer's GitHub profile for email)
-- Opening a **GitHub Security Advisory** for confidential reporting:
-  Repository → Security tab → Advisories → New draft advisory
+  [prateekiiitg56@gmail.com](mailto:prateekiiitg56@gmail.com)
+
 
 All reports will be reviewed and investigated promptly and fairly. The privacy
 and security of the reporter will be respected at all times.
@@ -111,7 +110,7 @@ sustained harassment, aggression, or disparagement of any individual or group.
 This Code of Conduct is adapted from the
 [Contributor Covenant](https://www.contributor-covenant.org), version 2.1,
 available at
-[https://www.contributor-covenant.org/version/2/1/code_of_conduct.html](https://www.contributor-covenant.org/version/2/1/code_of_conduct.html).
+[https://www.contributor-covenant.org/version/2/1/code_of_conduct/](https://www.contributor-covenant.org/version/2/1/code_of_conduct/)
 
 Community Impact Guidelines were inspired by
 [Mozilla's code of conduct enforcement ladder](https://github.com/mozilla/inclusion).
