@@ -376,6 +376,8 @@ if data:
 
         keyword_df = pd.DataFrame({"Keyword": keywords, "Frequency": keyword_counts}).sort_values(by="Frequency", ascending=False).reset_index(drop=True)
         # Sort by frequency, but keep the numbering intact regardless of its position in the dataframe
+    
+        st.dataframe(keyword_df, use_container_width=True)
 
     # ─── AI Assistant Tab ─────────────────────────────────────────────────────
 
