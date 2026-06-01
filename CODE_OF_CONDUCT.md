@@ -70,9 +70,10 @@ an appointed representative at an online or offline event.
 
 If you experience or witness unacceptable behavior, please report it by:
 
-- Opening a **private** GitHub issue marked `[CONDUCT]` in the title
-- Contacting the project maintainer directly via GitHub:
-  [@Prateekiiitg56](https://github.com/Prateekiiitg56)
+- Contacting the project maintainer directly via email at:
+  prateekiiitg56@gmail.com (or check maintainer's GitHub profile for email)
+- Opening a **GitHub Security Advisory** for confidential reporting:
+  Repository → Security tab → Advisories → New draft advisory
 
 All reports will be reviewed and investigated promptly and fairly. The privacy
 and security of the reporter will be respected at all times.
