@@ -79,7 +79,7 @@ def chat(request: ChatRequest):
     for attempt in range(max_retries): 
         try:
             # Depending on whether the user wants to use memory and has provided a session ID, we either invoke a conversational chain (which maintains context across messages) or a standard QA chain (which treats each message independently). The chains will use the search_filter determined by the smart metadata router to fetch relevant documents from the vector store.
-            if request.use_memory and request.session_id: 
+            if request.use_memory and request.session_id:
                 chain = chain_manager.get_conversational_chain(request.session_id, search_filter=search_filter)
                 result = chain.invoke({"question": request.question})
                 answer = result.get("answer", "")
@@ -90,14 +90,11 @@ def chat(request: ChatRequest):
                 answer = result.get("result", result.get("answer", ""))
                 sources = [doc.page_content for doc in result.get("source_documents", [])]
 
-            # Debug logs to inspect the raw AI result and the retrieved sources, which can help in understanding how the smart metadata router is influencing the results.
-            if request.use_memory and request.session_id:
-                chain = chain_manager.get_conversational_chain(request.session_id, search_filter=search_filter)
-                result = chain.invoke({"question": request.question})
-                print("🤖 RAW AI RESULT:", result)  
-                answer = result.get("answer", "")
-                sources = [doc.page_content for doc in result.get("source_documents", [])]
-                print("🔍 Retrieved sources:", sources) 
+            # Debug logging using the result from the single invocation above.
+            # The previous debug block re-invoked the chain, doubling LLM cost
+            # and writing an extra turn to conversation memory. Reuse result here.
+            logger.debug("RAW AI RESULT: %s", result)
+            logger.debug("Retrieved sources: %s", sources)
 
             # Return the AI's answer along with the sources it used. The frontend can use this information to display the answer and optionally show the sources to the user for transparency.
             return ChatResponse(
