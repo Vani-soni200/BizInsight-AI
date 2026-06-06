@@ -43,12 +43,17 @@ def initialize_database():
         """)
 
         try:
-            cursor.execute("ALTER TABLE feedback ADD COLUMN user_id INTEGER REFERENCES users(id)")
+            cursor.execute(
+                "ALTER TABLE feedback ADD COLUMN user_id INTEGER REFERENCES users(id)"
+            )
             conn.commit()
-        except sqlite3.OperationalError:
-            pass
 
-        conn.commit()
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                logger.info("user_id column already exists in feedback table")
+            else:
+                logger.exception("Unexpected database migration failure")
+                raise
 
 
 def no_users_exist():
