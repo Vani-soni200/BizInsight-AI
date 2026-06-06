@@ -1,4 +1,3 @@
-import re
 import streamlit as st
 from database import get_user_by_username, verify_password, create_user
 
@@ -24,36 +23,17 @@ def login(username, password):
         return None, "Incorrect password."
     return user, None
 
-def register(username, email, password, confirm_password):
 
+def register(username, password, confirm_password):
     if not username.strip():
         return False, "Username cannot be empty."
-
-    if not email.strip():
-        return False, "Email address cannot be empty."
-
-    email_pattern = r"^[^@]+@[^@]+\.[^@]+$"
-
-    if not re.match(email_pattern, email):
-        return False, "Please enter a valid email address."
-
     if len(password) < 6:
         return False, "Password must be at least 6 characters."
-
     if password != confirm_password:
         return False, "Passwords do not match."
-
-    result = create_user(username, email, password)
-
-    if result == "USERNAME_EXISTS":
-        return False, "Username already exists."
-
-    if result == "EMAIL_EXISTS":
-        return False, "Email already registered."
-
-    if not result:
-        return False, "Registration failed."
-
+    success = create_user(username, password)
+    if not success:
+        return False, "Username already taken. Choose a different one."
     return True, None
 
 
@@ -90,50 +70,25 @@ def show_auth_page():
                         st.rerun()
 
         with tab_register:
-
+            st.markdown("<br>", unsafe_allow_html=True)
             new_username = st.text_input(
-                "Username",
-                placeholder="Choose a username",
-                key="reg_username"
-            )
-
-            email = st.text_input(
-                "Email Address",
-                placeholder="Enter your email",
-                key="reg_email"
-            )
-
+                "Username", placeholder="Choose a username", key="reg_username")
             new_password = st.text_input(
-                "Password",
-                type="password",
-                placeholder="Minimum 6 characters",
-                key="reg_password"
-            )
-
+                "Password", type="password", placeholder="Min. 6 characters", key="reg_password")
             confirm_password = st.text_input(
-                "Confirm Password",
-                type="password",
-                placeholder="Re-enter password",
-                key="reg_confirm"
-            )
-
+                "Confirm Password", type="password", placeholder="Repeat your password", key="reg_confirm")
             st.markdown("<br>", unsafe_allow_html=True)
 
             if st.button("Create Account", use_container_width=True, type="primary"):
-
-                success, error = register(
-                    new_username,
-                    email,
-                    new_password,
-                    confirm_password
-                )
-
-                if error:
-                    st.error(error)
+                if not new_username or not new_password or not confirm_password:
+                    st.error("Please fill in all fields.")
                 else:
-                    st.success("Account created successfully! Please log in.")
-                    st.session_state["login_username"] = new_username
-                    st.rerun()
+                    success, error = register(
+                        new_username, new_password, confirm_password)
+                    if error:
+                        st.error(error)
+                    else:
+                        st.success("Account created! You can now log in.")
 
 
 def show_setup_wizard():
@@ -149,8 +104,6 @@ def show_setup_wizard():
 
         username = st.text_input(
             "Admin Username", placeholder="Choose an admin username")
-        email = st.text_input(
-            "Admin Email", placeholder="Enter an admin email")
         password = st.text_input(
             "Password", type="password", placeholder="Min. 6 characters")
         confirm = st.text_input(
@@ -158,14 +111,14 @@ def show_setup_wizard():
         st.markdown("<br>", unsafe_allow_html=True)
 
         if st.button("Create Admin Account", use_container_width=True, type="primary"):
-            if not username or not email or not password or not confirm:
+            if not username or not password or not confirm:
                 st.error("Please fill in all fields.")
             elif len(password) < 6:
                 st.error("Password must be at least 6 characters.")
             elif password != confirm:
                 st.error("Passwords do not match.")
             else:
-                success = create_user(username, email, password, role="admin")
+                success = create_user(username, password, role="admin")
                 if success:
                     st.success("Admin account created. You can now log in.")
                     st.rerun()

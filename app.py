@@ -7,8 +7,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 
-from email_alerts import send_negative_alert
-
 load_dotenv()
 
 import streamlit as st
@@ -224,31 +222,6 @@ if data:
             X = vectorizer.fit_transform(reviews)
             keywords = vectorizer.get_feature_names_out()
             keyword_counts = X.toarray().sum(axis=0)
-            keyword_df = pd.DataFrame({
-                "Keyword": keywords,
-                "Frequency": keyword_counts
-            })
-
-            ALERT_THRESHOLD = 40
-
-            if (
-                total_reviews >= 20
-                and negative_percent >= ALERT_THRESHOLD
-            ):
-
-                user_email = current_user["email"]
-
-                st.warning("EMAIL ALERT TRIGGERED")
-
-                result = send_negative_alert(
-                    receiver_email=user_email,
-                    negative_percentage=negative_percent,
-                    total_reviews=total_reviews,
-                    top_issues=list(keywords[:5])
-                )
-                if result:
-                    st.success("📧 Alert email sent successfully!")
-
         except ValueError as e:
             if "empty vocabulary" in str(e).lower():
                 keywords = []

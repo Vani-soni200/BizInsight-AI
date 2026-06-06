@@ -25,7 +25,6 @@ def initialize_database():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
-            email TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -61,28 +60,19 @@ def no_users_exist():
 
 # ─── User Functions ───────────────────────────────────────────────────────────
 
-def create_user(username, email, password, role="user"):
+def create_user(username, password, role="user"):
     try:
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO users (username,email,password_hash,role) VALUES (?,?,?,?)",
-                (username, email, hashed, role)
+                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                (username.strip(), hashed, role)
             )
             conn.commit()
             return True
-    except sqlite3.IntegrityError as e:
-
-        error_message = str(e).lower()
-
-        if "username" in error_message:
-            return "USERNAME_EXISTS"
-
-        if "email" in error_message:
-            return "EMAIL_EXISTS"
-
-        return False # username already taken
+    except sqlite3.IntegrityError:
+        return False  # username already taken
     except sqlite3.Error as e:
         logger.error(f"Create User Error: {e}")
         return False
@@ -92,55 +82,18 @@ def get_user_by_username(username):
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-
             cursor.execute(
-                """
-                SELECT
-                    id,
-                    username,
-                    email,
-                    password_hash,
-                    role
-                FROM users
-                WHERE username = ?
-                """,
+                "SELECT id, username, password_hash, role FROM users WHERE username = ?",
                 (username.strip(),)
             )
-
             row = cursor.fetchone()
-
             if row:
-                return {
-                    "id": row[0],
-                    "username": row[1],
-                    "email": row[2],
-                    "password_hash": row[3],
-                    "role": row[4]
-                }
-
+                return {"id": row[0], "username": row[1], "password_hash": row[2], "role": row[3]}
             return None
-
     except sqlite3.Error as e:
         logger.error(f"Get User Error: {e}")
         return None
 
-def get_user_email(user_id):
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-
-            cursor.execute(
-                "SELECT email FROM users WHERE id=?",
-                (user_id,)
-            )
-
-            row = cursor.fetchone()
-
-            return row[0] if row else None
-
-    except sqlite3.Error as e:
-        logger.error(f"Get Email Error: {e}")
-        return None
 
 def verify_password(plain_password, hashed_password):
     return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
