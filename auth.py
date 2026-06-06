@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 from database import get_user_by_username, verify_password, create_user
 
@@ -24,11 +25,33 @@ def login(username, password):
     return user, None
 
 
+# ─── Password Complexity Validator ────────────────────────────────────────────
+def validate_password_strength(password):
+    """
+    Validates password strength requirements for new account registrations.
+    """
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must contain at least one uppercase letter."
+    if not re.search(r"[a-z]", password):
+        return False, "Password must contain at least one lowercase letter."
+    if not re.search(r"\d", password):
+        return False, "Password must contain at least one digit."
+    if not re.search(r"[@#\$%&\*!]", password):
+        return False, "Password must contain at least one special character (e.g., @, #, $, %, &, *, !)."
+    return True, None
+
+
 def register(username, password, confirm_password):
     if not username.strip():
         return False, "Username cannot be empty."
-    if len(password) < 6:
-        return False, "Password must be at least 6 characters."
+    
+    # Use the new complexity check instead of len() < 6
+    is_strong, error_msg = validate_password_strength(password)
+    if not is_strong:
+        return False, error_msg
+        
     if password != confirm_password:
         return False, "Passwords do not match."
     success = create_user(username, password)
@@ -73,8 +96,15 @@ def show_auth_page():
             st.markdown("<br>", unsafe_allow_html=True)
             new_username = st.text_input(
                 "Username", placeholder="Choose a username", key="reg_username")
+            
+            # Updated UI text and added an hover tooltip info block
             new_password = st.text_input(
-                "Password", type="password", placeholder="Min. 6 characters", key="reg_password")
+                "Password", 
+                type="password", 
+                placeholder="Min. 8 characters", 
+                key="reg_password",
+                help="Requirements:\n- At least 8 characters\n- One uppercase & one lowercase letter\n- One number\n- One special character (@, #, $, %, &, *, !)"
+            )
             confirm_password = st.text_input(
                 "Confirm Password", type="password", placeholder="Repeat your password", key="reg_confirm")
             st.markdown("<br>", unsafe_allow_html=True)
@@ -102,10 +132,15 @@ def show_setup_wizard():
         st.markdown("---")
         st.markdown("<br>", unsafe_allow_html=True)
 
-        username = st.text_input(
-            "Admin Username", placeholder="Choose an admin username")
+        username = st.text_input("Admin Username", placeholder="Choose an admin username")
+        
+        # Updated UI properties for the Admin password initialization field
         password = st.text_input(
-            "Password", type="password", placeholder="Min. 6 characters")
+            "Password", 
+            type="password", 
+            placeholder="Min. 8 characters",
+            help="Requirements:\n- At least 8 characters\n- One uppercase & one lowercase letter\n- One number\n- One special character (@, #, $, %, &, *, !)"
+        )
         confirm = st.text_input(
             "Confirm Password", type="password", placeholder="Repeat your password")
         st.markdown("<br>", unsafe_allow_html=True)
@@ -113,14 +148,16 @@ def show_setup_wizard():
         if st.button("Create Admin Account", use_container_width=True, type="primary"):
             if not username or not password or not confirm:
                 st.error("Please fill in all fields.")
-            elif len(password) < 6:
-                st.error("Password must be at least 6 characters.")
-            elif password != confirm:
-                st.error("Passwords do not match.")
             else:
-                success = create_user(username, password, role="admin")
-                if success:
-                    st.success("Admin account created. You can now log in.")
-                    st.rerun()
+                is_strong, error_msg = validate_password_strength(password)
+                if not is_strong:
+                    st.error(error_msg)
+                elif password != confirm:
+                    st.error("Passwords do not match.")
                 else:
-                    st.error("Something went wrong. Try again.")
+                    success = create_user(username, password, role="admin")
+                    if success:
+                        st.success("Admin account created. You can now log in.")
+                        st.rerun()
+                    else:
+                        st.error("Something went wrong. Try again.")
