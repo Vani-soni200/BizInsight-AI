@@ -7,12 +7,20 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 
+from email_alerts import send_negative_alert
+
 load_dotenv()
 
 import streamlit as st
 st.set_page_config(page_title="BizInsight AI", layout="wide")
 
 from sklearn.feature_extraction.text import CountVectorizer
+from textblob import TextBlob
+from database import insert_feedback, fetch_feedback, clear_data
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 from openai import OpenAI
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
 from reportlab.lib.styles import getSampleStyleSheet
@@ -51,6 +59,11 @@ if not is_logged_in():
     st.stop()
 
 current_user = get_current_user()
+
+# --- Email Alert State ---
+if "alert_email" not in st.session_state:
+    st.session_state.alert_email = current_user.get("email", "")
+
 
 # ─── OpenAI Client ───────────────────────────────────────────────────────────
 
@@ -96,6 +109,35 @@ else:
 
 def get_sentiment(text):
     return vader_analyzer.polarity_scores(text)['compound']
+
+def send_alert_email(recipient_email, subject, body):
+    """Sends an email alert regarding sentiment spikes."""
+    try:
+        sender_email = st.secrets["email_credentials"]["sender_email"]
+        password = st.secrets["email_credentials"]["app_password"]
+    except (KeyError, FileNotFoundError):
+        st.error("Email credentials not found in secrets. Cannot send alert.")
+        return False
+
+    if not recipient_email:
+        st.warning("Alert email recipient not set. Skipping email notification.")
+        return False
+
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = recipient_email
+    message["Subject"] = subject
+    message.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, password)
+            server.sendmail(sender_email, recipient_email, message.as_string())
+        st.success(f"Negative sentiment alert sent to {recipient_email}!")
+        return True
+    except Exception as e:
+        st.error(f"Failed to send email: {e}")
+        return False
 
 def clean_text_for_sentiment(text):
     text = text.lower()
@@ -190,6 +232,18 @@ with tabs[2]:
                     insert_feedback_bulk(reviews_data, user_id=current_user["id"])
                     st.session_state["last_upload_hash"] = file_hash
                     st.success(f"{len(df)} feedback entries successfully added!")
+
+                    # Check for negative sentiment spike and send alert
+                    new_negative_percent = round((df[df["sentiment"] < 0].shape[0] / df.shape[0]) * 100, 2)
+                    if new_negative_percent > 30: # Threshold for alert
+                        subject = "BizInsight AI Alert: Negative Sentiment Spike Detected"
+                        body = (
+                            f"Hello,\n\nA recent data upload has shown a significant spike in negative sentiment.\n\n"
+                            f"Negative Sentiment in new batch: {new_negative_percent}%\n\n"
+                            f"Please log in to the BizInsight AI dashboard to analyze the feedback and take appropriate action.\n\n"
+                            f"Regards,\nThe BizInsight AI Team"
+                        )
+                        send_alert_email(st.session_state.alert_email, subject, body)
         else:
             st.info("This file has already been uploaded in this session.")
 
@@ -222,6 +276,31 @@ if data:
             X = vectorizer.fit_transform(reviews)
             keywords = vectorizer.get_feature_names_out()
             keyword_counts = X.toarray().sum(axis=0)
+            keyword_df = pd.DataFrame({
+                "Keyword": keywords,
+                "Frequency": keyword_counts
+            })
+
+            ALERT_THRESHOLD = 40
+
+            if (
+                total_reviews >= 20
+                and negative_percent >= ALERT_THRESHOLD
+            ):
+
+                user_email = current_user["email"]
+
+                st.warning("EMAIL ALERT TRIGGERED")
+
+                result = send_negative_alert(
+                    receiver_email=user_email,
+                    negative_percentage=negative_percent,
+                    total_reviews=total_reviews,
+                    top_issues=list(keywords[:5])
+                )
+                if result:
+                    st.success("📧 Alert email sent successfully!")
+
         except ValueError as e:
             if "empty vocabulary" in str(e).lower():
                 keywords = []
@@ -356,6 +435,17 @@ if data:
 
     with tabs[3]:
         st.subheader("⚙ System Controls")
+        
+        st.markdown("---")
+        st.subheader("📧 Email Alerts")
+        st.session_state.alert_email = st.text_input(
+            "Recipient email for alerts",
+            value=st.session_state.alert_email,
+            placeholder="Enter your email to receive alerts"
+        )
+        st.info("Alerts for negative sentiment spikes will be sent to this email.")
+        st.markdown("---")
+
         st.warning("⚠️ Clearing data permanently deletes all your stored reviews. This cannot be undone.")
 
         if "confirm_clear" not in st.session_state:

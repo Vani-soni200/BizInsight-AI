@@ -43,20 +43,33 @@ def validate_password_strength(password):
     return True, None
 
 
-def register(username, password, confirm_password):
+def register(username, email, password, confirm_password):
     if not username.strip():
         return False, "Username cannot be empty."
-    
-    # Use the new complexity check instead of len() < 6
+
+    if not email.strip():
+        return False, "Email address cannot be empty."
+
+    email_pattern = r"^[^@]+@[^@]+\.[^@]+$"
+    if not re.match(email_pattern, email):
+        return False, "Please enter a valid email address."
+
     is_strong, error_msg = validate_password_strength(password)
     if not is_strong:
         return False, error_msg
-        
+
     if password != confirm_password:
         return False, "Passwords do not match."
-    success = create_user(username, password)
-    if not success:
-        return False, "Username already taken. Choose a different one."
+
+    result = create_user(username, email, password)
+
+    if result == "USERNAME_EXISTS":
+        return False, "Username already exists."
+    if result == "EMAIL_EXISTS":
+        return False, "Email already registered."
+    if not result:
+        return False, "Registration failed."
+
     return True, None
 
 
@@ -93,32 +106,52 @@ def show_auth_page():
                         st.rerun()
 
         with tab_register:
-            st.markdown("<br>", unsafe_allow_html=True)
             new_username = st.text_input(
-                "Username", placeholder="Choose a username", key="reg_username")
-            
-            # Updated UI text and added an hover tooltip info block
+                "Username",
+                placeholder="Choose a username",
+                key="reg_username"
+            )
+
+            email = st.text_input(
+                "Email Address",
+                placeholder="Enter your email",
+                key="reg_email"
+            )
+
             new_password = st.text_input(
-                "Password", 
-                type="password", 
-                placeholder="Min. 8 characters", 
+                "Password",
+                type="password",
+                placeholder="Min. 8 characters",
                 key="reg_password",
                 help="Requirements:\n- At least 8 characters\n- One uppercase & one lowercase letter\n- One number\n- One special character (@, #, $, %, &, *, !)"
             )
+
             confirm_password = st.text_input(
-                "Confirm Password", type="password", placeholder="Repeat your password", key="reg_confirm")
+                "Confirm Password",
+                type="password",
+                placeholder="Re-enter password",
+                key="reg_confirm"
+            )
+
             st.markdown("<br>", unsafe_allow_html=True)
 
             if st.button("Create Account", use_container_width=True, type="primary"):
-                if not new_username or not new_password or not confirm_password:
+                if not new_username or not email or not new_password or not confirm_password:
                     st.error("Please fill in all fields.")
                 else:
                     success, error = register(
-                        new_username, new_password, confirm_password)
+                        new_username,
+                        email,
+                        new_password,
+                        confirm_password
+                    )
+
                     if error:
                         st.error(error)
                     else:
-                        st.success("Account created! You can now log in.")
+                        st.success("Account created successfully! Please log in.")
+                        st.session_state["login_username"] = new_username
+                        st.rerun()
 
 
 def show_setup_wizard():
@@ -132,9 +165,11 @@ def show_setup_wizard():
         st.markdown("---")
         st.markdown("<br>", unsafe_allow_html=True)
 
-        username = st.text_input("Admin Username", placeholder="Choose an admin username")
+        username = st.text_input(
+            "Admin Username", placeholder="Choose an admin username")
+        email = st.text_input(
+            "Admin Email", placeholder="Enter an admin email")
         
-        # Updated UI properties for the Admin password initialization field
         password = st.text_input(
             "Password", 
             type="password", 
@@ -146,16 +181,17 @@ def show_setup_wizard():
         st.markdown("<br>", unsafe_allow_html=True)
 
         if st.button("Create Admin Account", use_container_width=True, type="primary"):
-            if not username or not password or not confirm:
+            if not username or not email or not password or not confirm:
                 st.error("Please fill in all fields.")
             else:
+                # Validates complexity, then confirms matching string arrays
                 is_strong, error_msg = validate_password_strength(password)
                 if not is_strong:
                     st.error(error_msg)
                 elif password != confirm:
                     st.error("Passwords do not match.")
                 else:
-                    success = create_user(username, password, role="admin")
+                    success = create_user(username, email, password, role="admin")
                     if success:
                         st.success("Admin account created. You can now log in.")
                         st.rerun()
