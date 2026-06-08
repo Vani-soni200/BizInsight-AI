@@ -214,36 +214,54 @@ with tabs[2]:
         file_hash = hashlib.md5(uploaded_file.getvalue()).hexdigest()
 
         if st.session_state.get("last_upload_hash") != file_hash:
-            df = pd.read_csv(uploaded_file)
-            st.dataframe(df, use_container_width=True)
-
-            if "review" not in df.columns:
-                st.error("CSV must contain a 'review' column.")
+            df = None
+            encodings_to_try = ['utf-8', 'utf-16', 'latin1', 'cp1252']
+            
+            for encoding in encodings_to_try:
+                try:
+                    uploaded_file.seek(0)  # Always reset file pointer before reading
+                    temp_df = pd.read_csv(uploaded_file, encoding=encoding)
+                    
+                    # Check if 'review' is actually a valid column in this encoding
+                    if "review" in temp_df.columns:
+                        df = temp_df
+                        break
+                except (UnicodeDecodeError, Exception):
+                    continue
+            
+            if df is None:
+                st.error("Unable to read CSV file. Please ensure it is not corrupted and uses a standard encoding such as UTF-8 or Latin-1.")
+                st.session_state["last_upload_hash"] = file_hash
             else:
-                df = df.dropna(subset=["review"])
-                df["review"] = df["review"].astype(str).str.strip()
-                df = df[df["review"] != ""]
+                st.dataframe(df, use_container_width=True)
 
-                if df.empty:
-                    st.warning("No valid reviews found after cleaning. Nothing to process.")
+                if "review" not in df.columns:
+                    st.error("CSV must contain a 'review' column.")
                 else:
-                    df["sentiment"] = df["review"].apply(get_sentiment)
-                    reviews_data = list(zip(df["review"], df["sentiment"]))
-                    insert_feedback_bulk(reviews_data, user_id=current_user["id"])
-                    st.session_state["last_upload_hash"] = file_hash
-                    st.success(f"{len(df)} feedback entries successfully added!")
+                    df = df.dropna(subset=["review"])
+                    df["review"] = df["review"].astype(str).str.strip()
+                    df = df[df["review"] != ""]
 
-                    # Check for negative sentiment spike and send alert
-                    new_negative_percent = round((df[df["sentiment"] < 0].shape[0] / df.shape[0]) * 100, 2)
-                    if new_negative_percent > 30: # Threshold for alert
-                        subject = "BizInsight AI Alert: Negative Sentiment Spike Detected"
-                        body = (
-                            f"Hello,\n\nA recent data upload has shown a significant spike in negative sentiment.\n\n"
-                            f"Negative Sentiment in new batch: {new_negative_percent}%\n\n"
-                            f"Please log in to the BizInsight AI dashboard to analyze the feedback and take appropriate action.\n\n"
-                            f"Regards,\nThe BizInsight AI Team"
-                        )
-                        send_alert_email(st.session_state.alert_email, subject, body)
+                    if df.empty:
+                        st.warning("No valid reviews found after cleaning. Nothing to process.")
+                    else:
+                        df["sentiment"] = df["review"].apply(get_sentiment)
+                        reviews_data = list(zip(df["review"], df["sentiment"]))
+                        insert_feedback_bulk(reviews_data, user_id=current_user["id"])
+                        st.session_state["last_upload_hash"] = file_hash
+                        st.success(f"{len(df)} feedback entries successfully added!")
+
+                        # Check for negative sentiment spike and send alert
+                        new_negative_percent = round((df[df["sentiment"] < 0].shape[0] / df.shape[0]) * 100, 2)
+                        if new_negative_percent > 30: # Threshold for alert
+                            subject = "BizInsight AI Alert: Negative Sentiment Spike Detected"
+                            body = (
+                                f"Hello,\n\nA recent data upload has shown a significant spike in negative sentiment.\n\n"
+                                f"Negative Sentiment in new batch: {new_negative_percent}%\n\n"
+                                f"Please log in to the BizInsight AI dashboard to analyze the feedback and take appropriate action.\n\n"
+                                f"Regards,\nThe BizInsight AI Team"
+                            )
+                            send_alert_email(st.session_state.alert_email, subject, body)
         else:
             st.info("This file has already been uploaded in this session.")
 
