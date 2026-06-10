@@ -6,6 +6,7 @@ import requests
 import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
+from forecasting import forecast_sentiment
 
 from email_alerts import send_negative_alert
 
@@ -388,6 +389,69 @@ if data:
             plt.close(fig3)
 
         st.markdown("---")
+        st.markdown("---")
+        st.subheader("📈 Future Sentiment Forecast")
+
+        forecast_days = st.selectbox(
+            "Select Forecast Horizon",
+            [7, 14, 30]
+        )
+
+        try:
+
+            forecast_df = forecast_sentiment(
+                df,
+                forecast_days
+            )
+
+            st.line_chart(
+                forecast_df.set_index("date")
+            )
+
+            current_sentiment = round(
+                df["sentiment"].mean(),
+                3
+            )
+
+            future_sentiment = round(
+                forecast_df["predicted_sentiment"].mean(),
+                3
+            )
+
+            col1, col2 = st.columns(2)
+
+            col1.metric(
+                "Current Avg Sentiment",
+                current_sentiment
+            )
+
+            col2.metric(
+                f"{forecast_days}-Day Forecast",
+                future_sentiment,
+                round(
+                    future_sentiment - current_sentiment,
+                    3
+                )
+            )
+
+            if future_sentiment < -0.2:
+                st.error(
+                    "⚠️ Forecast suggests future customer dissatisfaction."
+                )
+
+            elif future_sentiment > 0.2:
+                st.success(
+                    "✅ Forecast suggests improving customer sentiment."
+                )
+
+            else:
+                st.info(
+                    "ℹ️ Forecast suggests stable customer sentiment."
+                )
+
+        except ValueError as e:
+            st.warning(str(e))
+        
         pdf_file = make_pdf(df, trend, list(keywords))
         st.download_button("Download PDF Report", pdf_file, file_name="report.pdf", mime="application/pdf")
 
