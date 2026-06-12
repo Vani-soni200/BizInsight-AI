@@ -1,4 +1,5 @@
 import os
+import logging
 import hashlib
 import uuid
 import re
@@ -11,11 +12,27 @@ from forecasting import forecast_sentiment
 from email_alerts import send_negative_alert
 
 load_dotenv()
+logging.basicConfig(level=logging.ERROR)
+logger = logging.getLogger(__name__)
 
 import streamlit as st
 st.set_page_config(page_title="BizInsight AI", layout="wide")
 
 from sklearn.feature_extraction.text import CountVectorizer
+from database import insert_feedback, fetch_feedback, clear_data
+
+from openai import (
+    OpenAI,
+    AuthenticationError,
+    RateLimitError,
+    APITimeoutError,
+    APIConnectionError,
+    APIError,
+)
+
+from sentiment import analyze
+
+# ---------- Chimera AI Client ----------
 from textblob import TextBlob
 from database import (
     insert_feedback,
@@ -160,6 +177,51 @@ def ask_ai(question, reviews):
 
 Customer reviews:
 {context}
+
+    Question:
+    {question}
+    """
+
+                try:
+
+                    response = client.chat.completions.create(
+                        model="tngtech/deepseek-r1t2-chimera:free",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You provide business intelligence insights."
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        temperature=0.4
+                    )
+
+                    answer = response.choices[0].message.content
+
+                    st.success("AI Insight Generated")
+                    st.write(answer)
+
+                except AuthenticationError:
+                    logger.exception("Authentication failure during AI API request")
+                    st.error("Authentication failed. Please check API configuration.")
+                except RateLimitError:
+                    logger.exception("AI API rate limit exceeded")
+                    st.error("Rate limit exceeded. Please try again later.")
+                except APITimeoutError:
+                    logger.exception("AI API request timed out")
+                    st.error("Request timed out. Please retry.")
+                except APIConnectionError:
+                    logger.exception("AI API connection failure")
+                    st.error("Network connection issue. Please check connectivity.")
+                except APIError:
+                    logger.exception("General AI API error occurred")
+                    st.error("AI service is temporarily unavailable.")
+                except Exception:
+                    logger.exception("Unexpected error during AI request")
+                    st.error("Unable to generate AI insight at the moment.")
 
 Question:
 {question}
@@ -495,6 +557,44 @@ if data:
                 autopct="%1.1f%%"
             )
 
+            st.pyplot(fig3)
+            plt.close(fig3)
+
+            st.markdown("---")
+
+        # Histogram
+
+        st.subheader("📊 Sentiment Score Distribution")
+
+        col_small, _ = st.columns([1.5, 4])
+
+        with col_small:
+            fig2, ax2 = plt.subplots(figsize=(2.8, 2.1))
+            try:
+                ax2.hist(df["sentiment"], bins=10)
+                
+                ax2.set_xlabel("Score", fontsize=8)
+                
+                ax2.set_ylabel("Freq", fontsize=8)
+                
+                ax2.tick_params(axis='both', labelsize=7)
+                
+                st.pyplot(fig2)
+            finally:
+                # Ensure matplotlib resources are always released
+                plt.close(fig2)
+            fig, ax = plt.subplots()
+            ax.pie([positive, negative, neutral], labels=["Positive","Negative","Neutral"], autopct="%1.1f%%")
+            st.pyplot(fig)
+            plt.close(fig)
+
+        st.subheader("📊 Sentiment Distribution")
+        fig2, ax2 = plt.subplots()
+        ax2.hist(df["sentiment"], bins=20)
+        ax2.set_xlabel("Sentiment Score")
+        ax2.set_ylabel("Frequency")
+        st.pyplot(fig2)
+        plt.close(fig2)
             st.pyplot(fig3)
             plt.close(fig3)
 
