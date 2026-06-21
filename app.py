@@ -1,4 +1,5 @@
 import os
+import logging
 import hashlib
 import uuid
 import re
@@ -6,13 +7,45 @@ import requests
 import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
+from forecasting import forecast_sentiment
+
+from email_alerts import send_negative_alert
 
 load_dotenv()
+logging.basicConfig(level=logging.ERROR)
+logger = logging.getLogger(__name__)
 
 import streamlit as st
 st.set_page_config(page_title="BizInsight AI", layout="wide")
 
 from sklearn.feature_extraction.text import CountVectorizer
+from database import insert_feedback, fetch_feedback, clear_data
+
+from openai import (
+    OpenAI,
+    AuthenticationError,
+    RateLimitError,
+    APITimeoutError,
+    APIConnectionError,
+    APIError,
+)
+
+from sentiment import analyze
+
+# ---------- Chimera AI Client ----------
+from textblob import TextBlob
+from database import (
+    insert_feedback,
+    fetch_feedback,
+    clear_data,
+    initialize_database
+)
+initialize_database()
+from database import insert_feedback, fetch_feedback, clear_data
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 from openai import OpenAI
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
 from reportlab.lib.styles import getSampleStyleSheet
@@ -51,6 +84,11 @@ if not is_logged_in():
     st.stop()
 
 current_user = get_current_user()
+
+# --- Email Alert State ---
+if "alert_email" not in st.session_state:
+    st.session_state.alert_email = current_user.get("email", "")
+
 
 # ─── OpenAI Client ───────────────────────────────────────────────────────────
 
@@ -97,6 +135,35 @@ else:
 def get_sentiment(text):
     return vader_analyzer.polarity_scores(text)['compound']
 
+def send_alert_email(recipient_email, subject, body):
+    """Sends an email alert regarding sentiment spikes."""
+    try:
+        sender_email = st.secrets["email_credentials"]["sender_email"]
+        password = st.secrets["email_credentials"]["app_password"]
+    except (KeyError, FileNotFoundError):
+        st.error("Email credentials not found in secrets. Cannot send alert.")
+        return False
+
+    if not recipient_email:
+        st.warning("Alert email recipient not set. Skipping email notification.")
+        return False
+
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = recipient_email
+    message["Subject"] = subject
+    message.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, password)
+            server.sendmail(sender_email, recipient_email, message.as_string())
+        st.success(f"Negative sentiment alert sent to {recipient_email}!")
+        return True
+    except Exception as e:
+        st.error(f"Failed to send email: {e}")
+        return False
+
 def clean_text_for_sentiment(text):
     text = text.lower()
     text = re.sub(r'\d+', '', text)
@@ -106,6 +173,7 @@ def clean_text_for_sentiment(text):
 
 def ask_ai(question, reviews):
     context = "\n".join(reviews[:40])
+
     prompt = f"""You are a business intelligence assistant.
 
 Customer reviews:
@@ -114,19 +182,43 @@ Customer reviews:
 Question:
 {question}
 """
+
     try:
         response = client.chat.completions.create(
             model="tngtech/deepseek-r1t2-chimera:free",
             messages=[
-                {"role": "system", "content": "You provide business intelligence insights."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You provide business intelligence insights."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ],
             temperature=0.4
         )
+
         return response.choices[0].message.content
+
+    except AuthenticationError:
+        return "Authentication failed."
+
+    except RateLimitError:
+        return "Rate limit exceeded."
+
+    except APITimeoutError:
+        return "Request timed out."
+
+    except APIConnectionError:
+        return "Connection error."
+
+    except APIError:
+        return "AI service unavailable."
+
     except Exception as e:
         return f"Error generating AI response: {str(e)}"
-
+    
 def make_pdf(df, trend, keywords):
     buffer = io.BytesIO()
     pdf = SimpleDocTemplate(buffer)
@@ -171,25 +263,79 @@ with tabs[2]:
     if uploaded_file:
         file_hash = hashlib.md5(uploaded_file.getvalue()).hexdigest()
 
-        if st.session_state.get("last_upload_hash") != file_hash:
-            df = pd.read_csv(uploaded_file)
-            st.dataframe(df, use_container_width=True)
+        df = pd.read_csv(uploaded_file)
+        if "date" not in df.columns:
+            st.error("CSV must contain a 'date' column.")
+            st.stop()
+        df["date"] = pd.to_datetime(df["date"])
+        st.dataframe(df, width='stretch')
+        if "review" not in df.columns:
+            st.error("CSV must contain a 'review' column.")
 
-            if "review" not in df.columns:
-                st.error("CSV must contain a 'review' column.")
+        else:
+
+            df = df.dropna(subset=["review"])
+            df["review"] = df["review"].astype(str).str.strip()
+            df = df[df["review"] != ""]
+
+            if df.empty:
+
+                st.warning("No valid reviews found after cleaning.")
+
             else:
-                df = df.dropna(subset=["review"])
-                df["review"] = df["review"].astype(str).str.strip()
-                df = df[df["review"] != ""]
-
-                if df.empty:
-                    st.warning("No valid reviews found after cleaning. Nothing to process.")
-                else:
+                with st.spinner("Analyzing sentiment..."):
                     df["sentiment"] = df["review"].apply(get_sentiment)
-                    reviews_data = list(zip(df["review"], df["sentiment"]))
-                    insert_feedback_bulk(reviews_data, user_id=current_user["id"])
-                    st.session_state["last_upload_hash"] = file_hash
-                    st.success(f"{len(df)} feedback entries successfully added!")
+        if st.session_state.get("last_upload_hash") != file_hash:
+            df = None
+            encodings_to_try = ['utf-8', 'utf-16', 'latin1', 'cp1252']
+
+            for encoding in encodings_to_try:
+                try:
+                    uploaded_file.seek(0) # Always reset file pointer before reading
+                    df = pd.read_csv(uploaded_file, encoding=encoding)
+                    break
+                except (UnicodeDecodeError, pd.errors.ParserError):
+                    continue
+            
+            if df is None:
+                st.error("Unable to read CSV file. Please ensure it is not corrupted and uses a standard encoding such as UTF-8 or Latin-1.")
+            else:
+                st.dataframe(df, use_container_width=True)
+
+                for _, row in df.iterrows():
+                    insert_feedback(
+                        row["review"],
+                        row["sentiment"],
+                        row["date"].strftime("%Y-%m-%d")
+                    )
+                    inserted_count += 1
+                if "review" not in df.columns:
+                    st.error("CSV must contain a 'review' column.")
+                else:
+                    df = df.dropna(subset=["review"])
+                    df["review"] = df["review"].astype(str).str.strip()
+                    df = df[df["review"] != ""]
+
+                    if df.empty:
+                        st.warning("No valid reviews found after cleaning. Nothing to process.")
+                    else:
+                        df["sentiment"] = df["review"].apply(get_sentiment)
+                        reviews_data = list(zip(df["review"], df["sentiment"]))
+                        insert_feedback_bulk(reviews_data, user_id=current_user["id"])
+                        st.session_state["last_upload_hash"] = file_hash
+                        st.success(f"{len(df)} feedback entries successfully added!")
+
+                        # Check for negative sentiment spike and send alert
+                        new_negative_percent = round((df[df["sentiment"] < 0].shape[0] / df.shape[0]) * 100, 2)
+                        if new_negative_percent > 30: # Threshold for alert
+                            subject = "BizInsight AI Alert: Negative Sentiment Spike Detected"
+                            body = (
+                                f"Hello,\n\nA recent data upload has shown a significant spike in negative sentiment.\n\n"
+                                f"Negative Sentiment in new batch: {new_negative_percent}%\n\n"
+                                f"Please log in to the BizInsight AI dashboard to analyze the feedback and take appropriate action.\n\n"
+                                f"Regards,\nThe BizInsight AI Team"
+                            )
+                            send_alert_email(st.session_state.alert_email, subject, body)
         else:
             st.info("This file has already been uploaded in this session.")
 
@@ -199,6 +345,7 @@ data = fetch_feedback(user_id=current_user["id"])
 
 if data:
     df = pd.DataFrame(data, columns=["review", "sentiment", "date"])
+
     df["date"] = pd.to_datetime(df["date"])
 
     positive = (df["sentiment"] > 0).sum()
@@ -210,24 +357,82 @@ if data:
     negative_percent = round((negative / total_reviews) * 100, 2)
     neutral_percent  = round((neutral  / total_reviews) * 100, 2)
 
+    # Existing sentiment trend
     trend = df.groupby(df["date"].dt.date)["sentiment"].mean()
 
+    # =========================================
+    # NEGATIVE REVIEW SPIKE DETECTION
+    # =========================================
+
+    # Only negative reviews
+    negative_df = df[df["sentiment"] < 0]
+
+    # Daily negative review counts
+    negative_trend = (
+        negative_df
+        .groupby(negative_df["date"].dt.date)
+        .size()
+    )
+
+    # Rolling statistics
+    rolling_mean = negative_trend.rolling(window=3).mean()
+
+    rolling_std = negative_trend.rolling(window=3).std()
+
+    # Threshold-based anomaly detection
+    
+    anomalies = negative_trend[
+        negative_trend > (rolling_mean + rolling_std)
+    ]
+
+    st.write("Negative Trend")
+    st.write(negative_trend)
+    
+    st.write("Rolling Mean")
+    st.write(rolling_mean)
+    
+    st.write("Rolling Std")
+    st.write(rolling_std)
+    
+    st.write("Detected Anomalies")
+    st.write(anomalies)
+
+    # =========================================
+
     reviews = df["review"].dropna()
-    if reviews.empty or (reviews.apply(lambda x: isinstance(x, str)).all() and reviews.str.strip().eq("").all()):
-        keywords = []
-        keyword_counts = []
-    else:
-        vectorizer = CountVectorizer(stop_words="english", max_features=10)
-        try:
-            X = vectorizer.fit_transform(reviews)
-            keywords = vectorizer.get_feature_names_out()
-            keyword_counts = X.toarray().sum(axis=0)
-        except ValueError as e:
-            if "empty vocabulary" in str(e).lower():
-                keywords = []
-                keyword_counts = []
-            else:
-                raise
+
+if reviews.empty or (
+    reviews.apply(lambda x: isinstance(x, str)).all()
+    and reviews.str.strip().eq("").all()
+):
+    keywords = []
+    keyword_counts = []
+
+else:
+    vectorizer = CountVectorizer(
+        stop_words="english",
+        max_features=10
+    )
+
+    try:
+        X = vectorizer.fit_transform(reviews)
+
+        keywords = vectorizer.get_feature_names_out()
+
+        keyword_counts = X.toarray().sum(axis=0)
+
+        keyword_df = pd.DataFrame({
+            "Keyword": keywords,
+            "Frequency": keyword_counts
+        })
+
+    except ValueError as e:
+
+        if "empty vocabulary" in str(e).lower():
+            keywords = []
+            keyword_counts = []
+        else:
+            raise
 
     keyword_df = pd.DataFrame({"Keyword": keywords, "Frequency": keyword_counts})
 
@@ -235,6 +440,16 @@ if data:
 
     with tabs[0]:
         st.subheader("📈 Business Health Overview")
+
+        if not anomalies.empty:
+            st.error(
+                f"⚠️ {len(anomalies)} negative sentiment spike(s) detected!"
+            )
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Reviews", len(df))
+        c2.metric("Positive", positive)
+        c3.metric("Negative", negative)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Reviews", total_reviews)
         c2.metric("Positive %", f"{positive_percent}%")
@@ -299,16 +514,175 @@ if data:
             st.subheader("Customer Satisfaction Trend")
             st.area_chart(trend)
         with col2:
+
+            fig3, ax3 = plt.subplots(figsize=(3.2, 3.2))
+
             fig3, ax3 = plt.subplots(figsize=(3.2, 3.2))
             ax3.pie(
                 [positive, negative, neutral],
                 labels=["Positive", "Negative", "Neutral"],
                 autopct="%1.1f%%"
             )
+
+            st.pyplot(fig3)
+            plt.close(fig3)
+
+            st.markdown("---")
+
+        # Histogram
+
+        st.subheader("📊 Sentiment Score Distribution")
+
+        col_small, _ = st.columns([1.5, 4])
+
+        with col_small:
+            fig2, ax2 = plt.subplots(figsize=(2.8, 2.1))
+            try:
+                ax2.hist(df["sentiment"], bins=10)
+                
+                ax2.set_xlabel("Score", fontsize=8)
+                
+                ax2.set_ylabel("Freq", fontsize=8)
+                
+                ax2.tick_params(axis='both', labelsize=7)
+                
+                st.pyplot(fig2)
+            finally:
+                # Ensure matplotlib resources are always released
+                plt.close(fig2)
+            fig, ax = plt.subplots()
+            ax.pie([positive, negative, neutral], labels=["Positive","Negative","Neutral"], autopct="%1.1f%%")
+            st.pyplot(fig)
+            plt.close(fig)
+
+        st.subheader("📊 Sentiment Distribution")
+        fig2, ax2 = plt.subplots()
+        ax2.hist(df["sentiment"], bins=20)
+        ax2.set_xlabel("Sentiment Score")
+        ax2.set_ylabel("Frequency")
+        st.pyplot(fig2)
+        plt.close(fig2)
+
+        with col1:
+            st.subheader("Negative Review Spike Detection")
+            
+            fig2, ax2 = plt.subplots(figsize=(10,4))
+            
+            # Main negative trend line
+            ax2.plot(
+                negative_trend.index,
+                negative_trend.values,
+                marker="o"
+            )
+            
+            # Highlight anomalies
+            ax2.scatter(
+                anomalies.index,
+                anomalies.values,
+                color="red",
+                s=220,
+                marker="X",
+                label="Anomaly"
+            )
+            
+            ax2.legend()
+            
+            ax2.set_xlabel("Date")
+            ax2.set_ylabel("Negative Reviews")
+            ax2.set_title("Anomaly Detection in Negative Reviews")
+            
+            st.pyplot(fig2)
+
+        with col2:
+            st.pyplot(fig)
+            plt.close(fig)  # Fix: prevents matplotlib memory leak
+            st.markdown("---")
+
+        # Histogram
+
+        st.subheader("📊 Sentiment Score Distribution")
+
+        col_small, _ = st.columns([1.5, 4])
+
+        with col_small:
+
+            fig2, ax2 = plt.subplots(figsize=(2.8, 2.1))
+
+            ax2.hist(df["sentiment"], bins=10)
+
+            ax2.set_xlabel("Score", fontsize=8)
+            ax2.set_ylabel("Freq", fontsize=8)
+
+            ax2.tick_params(axis='both', labelsize=7)
+
+            st.pyplot(fig2)
             st.pyplot(fig3)
             plt.close(fig3)
 
         st.markdown("---")
+        st.markdown("---")
+        st.subheader("📈 Future Sentiment Forecast")
+
+        forecast_days = st.selectbox(
+            "Select Forecast Horizon",
+            [7, 14, 30]
+        )
+
+        try:
+
+            forecast_df = forecast_sentiment(
+                df,
+                forecast_days
+            )
+
+            st.line_chart(
+                forecast_df.set_index("date")
+            )
+
+            current_sentiment = round(
+                df["sentiment"].mean(),
+                3
+            )
+
+            future_sentiment = round(
+                forecast_df["predicted_sentiment"].mean(),
+                3
+            )
+
+            col1, col2 = st.columns(2)
+
+            col1.metric(
+                "Current Avg Sentiment",
+                current_sentiment
+            )
+
+            col2.metric(
+                f"{forecast_days}-Day Forecast",
+                future_sentiment,
+                round(
+                    future_sentiment - current_sentiment,
+                    3
+                )
+            )
+
+            if future_sentiment < -0.2:
+                st.error(
+                    "⚠️ Forecast suggests future customer dissatisfaction."
+                )
+
+            elif future_sentiment > 0.2:
+                st.success(
+                    "✅ Forecast suggests improving customer sentiment."
+                )
+
+            else:
+                st.info(
+                    "ℹ️ Forecast suggests stable customer sentiment."
+                )
+
+        except ValueError as e:
+            st.warning(str(e))
+        
         pdf_file = make_pdf(df, trend, list(keywords))
         st.download_button("Download PDF Report", pdf_file, file_name="report.pdf", mime="application/pdf")
 
@@ -356,6 +730,17 @@ if data:
 
     with tabs[3]:
         st.subheader("⚙ System Controls")
+        
+        st.markdown("---")
+        st.subheader("📧 Email Alerts")
+        st.session_state.alert_email = st.text_input(
+            "Recipient email for alerts",
+            value=st.session_state.alert_email,
+            placeholder="Enter your email to receive alerts"
+        )
+        st.info("Alerts for negative sentiment spikes will be sent to this email.")
+        st.markdown("---")
+
         st.warning("⚠️ Clearing data permanently deletes all your stored reviews. This cannot be undone.")
 
         if "confirm_clear" not in st.session_state:
@@ -378,8 +763,8 @@ if data:
                 st.session_state["confirm_clear"] = False
                 st.rerun()
 
-else:
-    st.info("Upload feedback to start building insights.")
+#else:
+#    st.info("Upload feedback to start building insights.")
 
 # ─── Admin Tab ────────────────────────────────────────────────────────────────
 
