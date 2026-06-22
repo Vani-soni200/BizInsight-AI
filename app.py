@@ -177,6 +177,48 @@ def ask_ai(question, reviews):
 
     prompt = f"""You are a business intelligence assistant.
 
+# ================= AI ASSISTANT =================
+
+with tabs[1]:
+
+    st.subheader("🤖 AI Business Assistant")
+
+    question = st.text_area(
+        "Ask business insights question",
+        placeholder="Example: What are the major customer complaints?"
+    )
+
+    if st.button("Generate AI Insight"):
+
+        if client is None:
+            st.warning("AI features unavailable because API key is missing.")
+
+        elif question.strip() == "":
+            st.warning("Please enter a question.")
+
+        else:
+
+            data = fetch_feedback()
+
+            if not data:
+                st.warning("No feedback data available.")
+
+            else:
+
+                df_ai = pd.DataFrame(
+                    data,
+                    columns=["review", "sentiment", "date"]
+                )
+
+                MAX_REVIEWS_FOR_AI = 200
+                total_reviews_count = len(df_ai)
+                sampled_reviews = df_ai["review"].astype(str).tolist()[:MAX_REVIEWS_FOR_AI]
+                reviews_text = "\n".join(sampled_reviews)
+
+                prompt = f"""
+You are a business intelligence assistant.
+Analysing a sample of {len(sampled_reviews)} most recent reviews (out of {total_reviews_count} total).
+
 Customer reviews:
 {context}
 
