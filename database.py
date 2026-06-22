@@ -46,22 +46,17 @@ def initialize_database():
         # Workspace support
 
         try:
-            cursor.execute("""
-                ALTER TABLE users
-                ADD COLUMN workspace_type TEXT DEFAULT 'personal'
-            """)
-        except sqlite3.OperationalError:
-            pass
+            cursor.execute(
+                "ALTER TABLE feedback ADD COLUMN user_id INTEGER REFERENCES users(id)"
+            )
+            conn.commit()
 
-        try:
-            cursor.execute("""
-                ALTER TABLE users
-                ADD COLUMN workspace_id TEXT
-            """)
-        except sqlite3.OperationalError:
-            pass
-
-        conn.commit()
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                logger.info("user_id column already exists in feedback table")
+            else:
+                logger.exception("Unexpected database migration failure")
+                raise
 
 def insert_feedback(review, sentiment, created_at):
 
