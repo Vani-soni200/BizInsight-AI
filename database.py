@@ -32,6 +32,8 @@ def initialize_database():
             email TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
+            workspace_type TEXT NOT NULL DEFAULT 'personal',
+            workspace_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -48,25 +50,29 @@ def initialize_database():
         """)
 
         # Workspace support
+        user_columns = [
+            row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()
+        ]
+        feedback_columns = [
+            row[1] for row in cursor.execute("PRAGMA table_info(feedback)").fetchall()
+        ]
 
-        try:
+        if "workspace_type" not in user_columns:
+            cursor.execute(
+                "ALTER TABLE users ADD COLUMN workspace_type TEXT NOT NULL DEFAULT 'personal'"
+            )
+
+        if "workspace_id" not in user_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN workspace_id TEXT")
+
+        if "user_id" not in feedback_columns:
             cursor.execute(
                 "ALTER TABLE feedback ADD COLUMN user_id INTEGER REFERENCES users(id)"
             )
-            conn.commit()
 
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" in str(e).lower():
-                logger.info("user_id column already exists in feedback table")
-            else:
-                logger.exception("Unexpected database migration failure")
-                raise
+        conn.commit()
 
-def insert_feedback(review, sentiment, created_at):
 
-    # Handle None / NaN / empty reviews safely
-    if review is None or str(review).strip() == "":
-        raise ValueError("Review cannot be empty.")
 def no_users_exist():
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -76,13 +82,9 @@ def no_users_exist():
 
 # ─── User Functions ───────────────────────────────────────────────────────────
 
+
 def create_user(
-    username,
-    email,
-    password,
-    role="user",
-    workspace_type="personal",
-    workspace_id=None
+    username, email, password, role="user", workspace_type="personal", workspace_id=None
 ):
     try:
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -101,14 +103,7 @@ def create_user(
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    username,
-                    email,
-                    hashed,
-                    role,
-                    workspace_type,
-                    workspace_id
-                )
+                (username, email, hashed, role, workspace_type, workspace_id),
             )
             conn.commit()
             return True
@@ -122,19 +117,22 @@ def create_user(
         if "email" in error_message:
             return "EMAIL_EXISTS"
 
-        return False # username already taken
+        return False  # username already taken
     except sqlite3.Error as e:
         logger.error(f"Create User Error: {e}")
         return False
 
 
 def get_user_by_username(username):
+    username = (username or "").strip()
+    if not username:
+        return None
+
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(
-                """
+            select_query = """
                 SELECT
                     id,
                     username,
@@ -145,9 +143,9 @@ def get_user_by_username(username):
                     workspace_id
                 FROM users
                 WHERE username = ?
-                """,
-                (username.strip(),)
-            )
+                """
+
+            cursor.execute(select_query, (username,))
 
             row = cursor.fetchone()
 
@@ -159,7 +157,7 @@ def get_user_by_username(username):
                     "password_hash": row[3],
                     "role": row[4],
                     "workspace_type": row[5],
-                    "workspace_id": row[6]
+                    "workspace_id": row[6],
                 }
 
             return None
@@ -168,15 +166,13 @@ def get_user_by_username(username):
         logger.error(f"Get User Error: {e}")
         return None
 
+
 def get_user_email(user_id):
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(
-                "SELECT email FROM users WHERE id=?",
-                (user_id,)
-            )
+            cursor.execute("SELECT email FROM users WHERE id=?", (user_id,))
 
             row = cursor.fetchone()
 
@@ -185,6 +181,7 @@ def get_user_email(user_id):
     except sqlite3.Error as e:
         logger.error(f"Get Email Error: {e}")
         return None
+
 
 def get_user_workspace(user_id):
     try:
@@ -197,22 +194,21 @@ def get_user_workspace(user_id):
                 FROM users
                 WHERE id = ?
                 """,
-                (user_id,)
+                (user_id,),
             )
 
             row = cursor.fetchone()
 
             if row:
-                return {
-                    "workspace_type": row[0],
-                    "workspace_id": row[1]
-                }
+                return {"workspace_type": row[0], "workspace_id": row[1]}
 
             return None
 
     except sqlite3.Error as e:
         logger.error(f"Workspace Fetch Error: {e}")
         return None
+
+
 def get_workspace_feedback(workspace_id):
     try:
         with get_connection() as conn:
@@ -230,7 +226,7 @@ def get_workspace_feedback(workspace_id):
                 WHERE u.workspace_id = ?
                 ORDER BY f.created_at DESC
                 """,
-                (workspace_id,)
+                (workspace_id,),
             )
 
             return cursor.fetchall()
@@ -238,7 +234,8 @@ def get_workspace_feedback(workspace_id):
     except sqlite3.Error as e:
         logger.error(f"Workspace Fetch Error: {e}")
         return []
-    
+
+
 def verify_password(plain_password, hashed_password):
     return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
@@ -276,6 +273,7 @@ def delete_user(user_id):
 
 # ─── Feedback Functions ───────────────────────────────────────────────────────
 
+
 def insert_feedback(review, sentiment, user_id):
     if review is None or str(review).strip() == "":
         raise ValueError("Review cannot be empty.")
@@ -284,21 +282,22 @@ def insert_feedback(review, sentiment, user_id):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO feedback (review, sentiment, user_id) VALUES (?, ?, ?)",
-                (str(review), sentiment, user_id)
+                (str(review), sentiment, user_id),
             )
             conn.commit()
             return True
     except sqlite3.Error as e:
         logger.error(f"Insert Error: {e}")
         raise sqlite3.Error(f"Insert Error: {e}")
-    
-def insert_feedback_bulk(reviews_data, user_id):   
+
+
+def insert_feedback_bulk(reviews_data, user_id):
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.executemany(
                 "INSERT INTO feedback (review, sentiment, user_id) VALUES (?, ?, ?)",
-                [(review, sentiment, user_id) for review, sentiment in reviews_data]
+                [(review, sentiment, user_id) for review, sentiment in reviews_data],
             )
             conn.commit()
             return True
@@ -311,12 +310,15 @@ def fetch_feedback(user_id):
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT review, sentiment, created_at
                 FROM feedback
                 WHERE user_id = ?
                 ORDER BY created_at DESC, id DESC
-            """, (user_id,))
+            """,
+                (user_id,),
+            )
             return cursor.fetchall()
     except sqlite3.Error as e:
         logger.error(f"Fetch Error: {e}")
