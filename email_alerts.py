@@ -69,5 +69,5 @@ BizInsight AI
 
     except Exception as e:
         print("SMTP ERROR:", e)
-        logging.error(f"Failed to send email to {receiver_email}: {e}")
+        logger.exception(f"Failed to send email to {receiver_email}")
         return False
