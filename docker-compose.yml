@@ -1,7 +1,6 @@
 services:
   bizinsight-ai:
     build: .
-    container_name: bizinsight-ai
     ports:
       - "8501:8501"
     # Loads OPENROUTER_API_KEY (and any other secrets) from .env in the
@@ -11,19 +10,12 @@ services:
       - path: ./.env
         required: true
     volumes:
-      # database.py connects to sqlite3.connect("bizinsight.db"), a path
-      # relative to the app's working directory (/app/bizinsight.db inside
-      # the container). Bind-mounting that exact file to a file on the host
-      # persists all feedback data across `docker compose down`/`up` and
-      # image rebuilds, with zero changes to the application code.
-      #
-      # IMPORTANT: this file must already exist on the host before the
-      # first `docker compose up`. If it doesn't, Docker will create a
-      # DIRECTORY at that path instead of mounting a file, and the app
-      # will crash trying to open a directory as a SQLite database.
-      # Run `New-Item -ItemType File bizinsight.db` (PowerShell) or
-      # `touch bizinsight.db` (macOS/Linux) once before the first run.
-      - ./bizinsight.db:/app/bizinsight.db
+      # The Dockerfile symlinks /app/bizinsight.db -> /data/bizinsight.db,
+      # so mounting a directory here (rather than the .db file directly)
+      # lets SQLite create its sibling "-journal"/"-wal"/"-shm" files
+      # safely, and the database file is created automatically on first
+      # run -- no need to pre-create anything on the host.
+      - ./data:/data
 
       # rag_api/config.py and sync_vectors.py persist Chroma's vector
       # embeddings to ./chroma_db (a directory, so no pre-create needed).

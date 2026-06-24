@@ -1,6 +1,6 @@
 # BizInsight AI - Dockerfile
 # Builds a container image that runs the Streamlit app with all
-# required dependencies (incl. NLTK/TextBlob corpora and ML models) baked in.
+# required dependencies (incl. NLTK/TextBlob corpora) baked in.
 
 FROM python:3.11-slim
 
@@ -24,20 +24,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# NLTK_DATA must be set BEFORE the downloader runs below, otherwise the
-# corpora land in the default location (e.g. /root/nltk_data) instead of
-# the path we declare here, and the app fails to find them at runtime,
-# falling back to a slow/flaky download on first request.
+# NLTK_DATA must be set BEFORE the downloader runs, otherwise the
+# corpora land in the default location (e.g. /root/nltk_data) instead
+# of the path below, and the app fails to find them at runtime and
+# falls back to a slow/flaky download on first request.
+# HF_HOME is set explicitly (rather than relying on the implicit
+# ~/.cache/huggingface default) so the build-time download and the
+# runtime lookup are guaranteed to use the same path.
 ENV NLTK_DATA=/usr/local/share/nltk_data \
     HF_HOME=/usr/local/share/huggingface
 
-# Pre-download everything the app needs to run inference offline:
+# Pre-download everything the app needs to do inference offline:
 #  - vader_lexicon / TextBlob corpora: used by sentiment.py / app.py
 #  - SentenceTransformer models: used by clustering/vectorize.py and
 #    sync_vectors.py / rag_api/config.py for embeddings
 #  - CrossEncoder: used by rag_api/chains.py to rerank RAG results
-# Baking these into the image avoids pulling hundreds of MB on first
-# request and keeps startup fast and reliable.
+# Baking these into the image means the first request doesn't have to
+# pull ~hundreds of MB from the internet, and the app still works in
+# network-restricted environments.
 RUN python -m nltk.downloader vader_lexicon -d "$NLTK_DATA" \
     && python -m textblob.download_corpora \
     && python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
@@ -47,6 +51,20 @@ CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
 # Now copy the rest of the application code.
 COPY . .
+
+# Create a data directory and symlink the database file into it.
+# database.py does sqlite3.connect("bizinsight.db"), a path relative to
+# /app, so /app/bizinsight.db now resolves through this symlink into
+# /data/bizinsight.db. /data is meant to be mounted as a directory-level
+# volume in docker-compose.yml.
+#
+# This avoids bind-mounting the .db file directly: a single-file bind
+# mount doesn't give SQLite a real directory to create its sibling
+# "-journal"/"-wal"/"-shm" files in, which can cause locking issues, and
+# it requires the file to already exist on the host before the first
+# `docker compose up` (otherwise Docker creates a directory in its place
+# and the app crashes trying to open a directory as a database).
+RUN mkdir -p /data && ln -sf /data/bizinsight.db /app/bizinsight.db
 
 # Streamlit's default port
 EXPOSE 8501

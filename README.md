@@ -239,17 +239,7 @@ You can run BizInsight AI in a container with no local Python setup.
 echo "OPENROUTER_API_KEY=your_api_key_here" > .env
 ```
 
-### 2. Pre-create the SQLite database file
-Docker will mount a directory instead of a file if `bizinsight.db` doesn't already exist on the host — pre-create it once:
-```bash
-# Windows (PowerShell)
-New-Item -ItemType File bizinsight.db
-
-# macOS/Linux
-touch bizinsight.db
-```
-
-### 3. Build and start the app
+### 2. Build and start the app
 ```bash
 docker compose up --build
 ```
@@ -257,7 +247,7 @@ docker compose up --build
 The dashboard will be available at **http://localhost:8501**.
 
 ### Notes
-- Customer feedback data is stored in `bizinsight.db` in the project root (bind-mounted into the container), so it persists across `docker compose down` / `up` and rebuilds.
+- Customer feedback data is stored in `./data/bizinsight.db` on the host (mounted into the container), so it persists across `docker compose down` / `up` and rebuilds.
 - The first build installs several large ML dependencies (PyTorch, Transformers, ChromaDB, etc.) and can take a while — subsequent builds are cached and much faster.
 - To stop the app: `docker compose down`
 
