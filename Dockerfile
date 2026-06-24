@@ -19,6 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# torch is pulled from PyPI's default index by `pip install -r requirements.txt`,
+# which serves CUDA-enabled wheels on Linux (2GB+) -- unnecessary for this
+# CPU-only Streamlit app and a major contributor to image size/build time.
+# Installing the official CPU-only build first means the later
+# `pip install -r requirements.txt` sees torch>=2.2.0 already satisfied
+# (pip's default "only-if-needed" upgrade strategy) and leaves it alone.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
 # Install Python dependencies first so this layer is cached
 # unless requirements.txt changes.
 COPY requirements.txt .
@@ -55,8 +63,8 @@ COPY . .
 # Create a data directory and symlink the database file into it.
 # database.py does sqlite3.connect("bizinsight.db"), a path relative to
 # /app, so /app/bizinsight.db now resolves through this symlink into
-# /data/bizinsight.db. /data is meant to be mounted as a directory-level
-# volume in docker-compose.yml.
+# /data/bizinsight.db. /data is meant to be mounted as a volume in
+# docker-compose.yml.
 #
 # This avoids bind-mounting the .db file directly: a single-file bind
 # mount doesn't give SQLite a real directory to create its sibling
@@ -65,6 +73,15 @@ COPY . .
 # `docker compose up` (otherwise Docker creates a directory in its place
 # and the app crashes trying to open a directory as a database).
 RUN mkdir -p /data && ln -sf /data/bizinsight.db /app/bizinsight.db
+
+# Run as a non-root user. By default containers run as root, which is
+# unnecessary privilege for a Streamlit app and a real risk if any
+# dependency has an exploitable vulnerability. /app and /data need to
+# be writable by this user (app code dir + the SQLite/Chroma data dirs);
+# the NLTK/HuggingFace caches under /usr/local/share are root-owned but
+# world-readable (755), so no extra chown is needed there.
+RUN useradd -u 10001 -m appuser && chown -R appuser:appuser /app /data
+USER appuser
 
 # Streamlit's default port
 EXPOSE 8501

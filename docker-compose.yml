@@ -10,18 +10,19 @@ services:
       - path: ./.env
         required: true
     volumes:
-      # The Dockerfile symlinks /app/bizinsight.db -> /data/bizinsight.db,
-      # so mounting a directory here (rather than the .db file directly)
-      # lets SQLite create its sibling "-journal"/"-wal"/"-shm" files
-      # safely, and the database file is created automatically on first
-      # run -- no need to pre-create anything on the host.
-      - ./data:/data
-
-      # rag_api/config.py and sync_vectors.py persist Chroma's vector
-      # embeddings to ./chroma_db (a directory, so no pre-create needed).
-      # Without this mount, the RAG chatbot's embeddings would be wiped
-      # on every container restart/rebuild and fall out of sync with the
-      # SQLite feedback data.
-      - ./chroma_db:/app/chroma_db
+      # Named volumes (managed by Docker) instead of host bind mounts.
+      # Bind mounts can cause permission errors now that the container
+      # runs as a non-root user: if the host directory doesn't exist yet,
+      # Docker creates it as root:root, which the container's unprivileged
+      # appuser can't write to. Named volumes are created and owned
+      # correctly by Docker regardless of host OS, and the Dockerfile's
+      # /app/bizinsight.db -> /data/bizinsight.db symlink means the
+      # database file is created automatically on first run.
+      - bizinsight_data:/data
+      - chroma_db:/app/chroma_db
     restart: unless-stopped
-    
+
+volumes:
+  bizinsight_data:
+  chroma_db:
+  
