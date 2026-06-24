@@ -16,6 +16,20 @@ services:
       # the container). Bind-mounting that exact file to a file on the host
       # persists all feedback data across `docker compose down`/`up` and
       # image rebuilds, with zero changes to the application code.
+      #
+      # IMPORTANT: this file must already exist on the host before the
+      # first `docker compose up`. If it doesn't, Docker will create a
+      # DIRECTORY at that path instead of mounting a file, and the app
+      # will crash trying to open a directory as a SQLite database.
+      # Run `New-Item -ItemType File bizinsight.db` (PowerShell) or
+      # `touch bizinsight.db` (macOS/Linux) once before the first run.
       - ./bizinsight.db:/app/bizinsight.db
+
+      # rag_api/config.py and sync_vectors.py persist Chroma's vector
+      # embeddings to ./chroma_db (a directory, so no pre-create needed).
+      # Without this mount, the RAG chatbot's embeddings would be wiped
+      # on every container restart/rebuild and fall out of sync with the
+      # SQLite feedback data.
+      - ./chroma_db:/app/chroma_db
     restart: unless-stopped
     

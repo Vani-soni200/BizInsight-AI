@@ -239,7 +239,17 @@ You can run BizInsight AI in a container with no local Python setup.
 echo "OPENROUTER_API_KEY=your_api_key_here" > .env
 ```
 
-### 2. Build and start the app
+### 2. Pre-create the SQLite database file
+Docker will mount a directory instead of a file if `bizinsight.db` doesn't already exist on the host — pre-create it once:
+```bash
+# Windows (PowerShell)
+New-Item -ItemType File bizinsight.db
+
+# macOS/Linux
+touch bizinsight.db
+```
+
+### 3. Build and start the app
 ```bash
 docker compose up --build
 ```

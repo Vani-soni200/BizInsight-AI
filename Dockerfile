@@ -1,6 +1,6 @@
 # BizInsight AI - Dockerfile
 # Builds a container image that runs the Streamlit app with all
-# required dependencies (incl. NLTK/TextBlob corpora) baked in.
+# required dependencies (incl. NLTK/TextBlob corpora and ML models) baked in.
 
 FROM python:3.11-slim
 
@@ -24,12 +24,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download the NLTK/TextBlob corpora the app needs at runtime
-# (app.py / sentiment.py use VADER; TextBlob needs its own corpora).
-# Baking these in avoids a slow/flaky download on first request.
-RUN python -m nltk.downloader vader_lexicon -d /usr/local/share/nltk_data \
-    && python -m textblob.download_corpora
-ENV NLTK_DATA=/usr/local/share/nltk_data
+# NLTK_DATA must be set BEFORE the downloader runs below, otherwise the
+# corpora land in the default location (e.g. /root/nltk_data) instead of
+# the path we declare here, and the app fails to find them at runtime,
+# falling back to a slow/flaky download on first request.
+ENV NLTK_DATA=/usr/local/share/nltk_data \
+    HF_HOME=/usr/local/share/huggingface
+
+# Pre-download everything the app needs to run inference offline:
+#  - vader_lexicon / TextBlob corpora: used by sentiment.py / app.py
+#  - SentenceTransformer models: used by clustering/vectorize.py and
+#    sync_vectors.py / rag_api/config.py for embeddings
+#  - CrossEncoder: used by rag_api/chains.py to rerank RAG results
+# Baking these into the image avoids pulling hundreds of MB on first
+# request and keeps startup fast and reliable.
+RUN python -m nltk.downloader vader_lexicon -d "$NLTK_DATA" \
+    && python -m textblob.download_corpora \
+    && python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
+SentenceTransformer('all-mpnet-base-v2'); \
+SentenceTransformer('all-MiniLM-L6-v2'); \
+CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
 # Now copy the rest of the application code.
 COPY . .
