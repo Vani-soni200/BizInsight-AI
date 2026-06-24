@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 @contextmanager
 def get_connection():
     conn = sqlite3.connect(DB_NAME)
+
+    # Enforce SQLite foreign key constraints for all connections
+    conn.execute("PRAGMA foreign_keys = ON")
+
     try:
         yield conn
     finally:
@@ -25,8 +29,11 @@ def initialize_database():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
+            workspace_type TEXT NOT NULL DEFAULT 'personal',
+            workspace_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -36,17 +43,47 @@ def initialize_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             review TEXT NOT NULL,
             sentiment REAL NOT NULL,
-            user_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            user_id INTEGER,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
         """)
+        
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
 
-        try:
-            cursor.execute("ALTER TABLE feedback ADD COLUMN user_id INTEGER REFERENCES users(id)")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chat_history_session
+        ON chat_history (session_id, created_at)
+        """)
+        conn.commit()
+        # Workspace support
+        user_columns = [
+            row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()
+        ]
+        feedback_columns = [
+            row[1] for row in cursor.execute("PRAGMA table_info(feedback)").fetchall()
+        ]
+
+        if "workspace_type" not in user_columns:
+            cursor.execute(
+                "ALTER TABLE users ADD COLUMN workspace_type TEXT NOT NULL DEFAULT 'personal'"
+            )
+
+        if "workspace_id" not in user_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN workspace_id TEXT")
+
+        if "user_id" not in feedback_columns:
+            cursor.execute(
+                "ALTER TABLE feedback ADD COLUMN user_id INTEGER REFERENCES users(id)"
+            )
 
         conn.commit()
 
@@ -60,18 +97,41 @@ def no_users_exist():
 
 # ─── User Functions ───────────────────────────────────────────────────────────
 
-def create_user(username, password, role="user"):
+
+def create_user(
+    username, email, password, role="user", workspace_type="personal", workspace_id=None
+):
     try:
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                (username.strip(), hashed, role)
+                """
+                INSERT INTO users
+                (
+                    username,
+                    email,
+                    password_hash,
+                    role,
+                    workspace_type,
+                    workspace_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (username, email, hashed, role, workspace_type, workspace_id),
             )
             conn.commit()
             return True
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as e:
+
+        error_message = str(e).lower()
+
+        if "username" in error_message:
+            return "USERNAME_EXISTS"
+
+        if "email" in error_message:
+            return "EMAIL_EXISTS"
+
         return False  # username already taken
     except sqlite3.Error as e:
         logger.error(f"Create User Error: {e}")
@@ -79,20 +139,116 @@ def create_user(username, password, role="user"):
 
 
 def get_user_by_username(username):
+    username = (username or "").strip()
+    if not username:
+        return None
+
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, username, password_hash, role FROM users WHERE username = ?",
-                (username.strip(),)
-            )
+
+            select_query = """
+                SELECT
+                    id,
+                    username,
+                    email,
+                    password_hash,
+                    role,
+                    workspace_type,
+                    workspace_id
+                FROM users
+                WHERE username = ?
+                """
+
+            cursor.execute(select_query, (username,))
+
             row = cursor.fetchone()
+
             if row:
-                return {"id": row[0], "username": row[1], "password_hash": row[2], "role": row[3]}
+                return {
+                    "id": row[0],
+                    "username": row[1],
+                    "email": row[2],
+                    "password_hash": row[3],
+                    "role": row[4],
+                    "workspace_type": row[5],
+                    "workspace_id": row[6],
+                }
+
             return None
+
     except sqlite3.Error as e:
         logger.error(f"Get User Error: {e}")
         return None
+
+
+def get_user_email(user_id):
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT email FROM users WHERE id=?", (user_id,))
+
+            row = cursor.fetchone()
+
+            return row[0] if row else None
+
+    except sqlite3.Error as e:
+        logger.error(f"Get Email Error: {e}")
+        return None
+
+
+def get_user_workspace(user_id):
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT workspace_type, workspace_id
+                FROM users
+                WHERE id = ?
+                """,
+                (user_id,),
+            )
+
+            row = cursor.fetchone()
+
+            if row:
+                return {"workspace_type": row[0], "workspace_id": row[1]}
+
+            return None
+
+    except sqlite3.Error as e:
+        logger.error(f"Workspace Fetch Error: {e}")
+        return None
+
+
+def get_workspace_feedback(workspace_id):
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT
+                    f.review,
+                    f.sentiment,
+                    f.created_at
+                FROM feedback f
+                INNER JOIN users u
+                    ON f.user_id = u.id
+                WHERE u.workspace_id = ?
+                ORDER BY f.created_at DESC
+                """,
+                (workspace_id,),
+            )
+
+            return cursor.fetchall()
+
+    except sqlite3.Error as e:
+        logger.error(f"Workspace Fetch Error: {e}")
+        return []
 
 
 def verify_password(plain_password, hashed_password):
@@ -132,6 +288,7 @@ def delete_user(user_id):
 
 # ─── Feedback Functions ───────────────────────────────────────────────────────
 
+
 def insert_feedback(review, sentiment, user_id):
     if review is None or str(review).strip() == "":
         raise ValueError("Review cannot be empty.")
@@ -140,21 +297,22 @@ def insert_feedback(review, sentiment, user_id):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO feedback (review, sentiment, user_id) VALUES (?, ?, ?)",
-                (str(review), sentiment, user_id)
+                (str(review), sentiment, user_id),
             )
             conn.commit()
             return True
     except sqlite3.Error as e:
         logger.error(f"Insert Error: {e}")
         raise sqlite3.Error(f"Insert Error: {e}")
-    
-def insert_feedback_bulk(reviews_data, user_id):   
+
+
+def insert_feedback_bulk(reviews_data, user_id):
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.executemany(
                 "INSERT INTO feedback (review, sentiment, user_id) VALUES (?, ?, ?)",
-                [(review, sentiment, user_id) for review, sentiment in reviews_data]
+                [(review, sentiment, user_id) for review, sentiment in reviews_data],
             )
             conn.commit()
             return True
@@ -167,12 +325,15 @@ def fetch_feedback(user_id):
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT review, sentiment, created_at
                 FROM feedback
                 WHERE user_id = ?
                 ORDER BY created_at DESC, id DESC
-            """, (user_id,))
+            """,
+                (user_id,),
+            )
             return cursor.fetchall()
     except sqlite3.Error as e:
         logger.error(f"Fetch Error: {e}")

@@ -231,16 +231,35 @@ streamlit run app.py
 ---
 
 ### Requirements.txt
-streamlit
-pandas
-matplotlib
+
+```text
+streamlit>=1.32.0
+pandas>=2.0.0
+numpy>=1.26.0
+matplotlib>=3.8.0
 scikit-learn
 nltk
+openai
+requests
+python-dotenv
+bcrypt
+reportlab
+fpdf
+transformers>=4.40.0
+torch>=2.2.0
+sentence-transformers>=2.2.0
 bertopic
 hdbscan
 umap-learn
-sentence-transformers
-python-dotenv
+chromadb
+langchain
+langchain-community
+langchain-chroma
+langchain-openai
+fastapi
+uvicorn
+tf-keras
+```
 
 ## 📄 CSV Format
 
@@ -280,3 +299,30 @@ BTech Student | AI & Software Development Enthusiast
 ---
 
 ⭐ If you like this project, consider giving it a star!
+
+## ✨ README Improvement Notes
+
+### 📌 Formatting Enhancements Needed
+- Improve heading hierarchy for better readability
+- Ensure consistent spacing between sections
+- Use proper Markdown formatting for code blocks and lists
+- Align all installation and usage steps properly
+
+### 🚀 Suggested Structure Upgrade
+- Introduction
+- Features
+- Tech Stack
+- Installation
+- Usage
+- Project Structure
+- Contribution Guidelines
+- License
+
+### 🛠️ Documentation Improvements
+- Add badges (optional): build, license, contributors
+- Add screenshots for better UI understanding
+- Standardize code blocks for commands
+
+### 🎯 Goal
+Improve onboarding experience for new contributors and users by making README more structured, readable, and professional
+

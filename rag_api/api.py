@@ -1,11 +1,21 @@
 import logging
-import time  
-from fastapi import FastAPI, HTTPException
+import os
+import time
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from .chains import RAGChainManager
 from .config import RAGConfig
+
+# API key required to call the /sync endpoint. Set SYNC_API_KEY in the
+# server environment. If the variable is not set the check is skipped so
+# existing local deployments continue to work without changes.
+_SYNC_API_KEY: Optional[str] = os.getenv("SYNC_API_KEY") or None
+
+# Hard limits for /sync to prevent memory exhaustion or vector store pollution.
+_MAX_DOCS_PER_SYNC: int = 10_000
+_MAX_CONTENT_LENGTH: int = 5_000  # characters per document
 
 logging.basicConfig(level=RAGConfig.LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -79,25 +89,29 @@ def chat(request: ChatRequest):
     for attempt in range(max_retries): 
         try:
             # Depending on whether the user wants to use memory and has provided a session ID, we either invoke a conversational chain (which maintains context across messages) or a standard QA chain (which treats each message independently). The chains will use the search_filter determined by the smart metadata router to fetch relevant documents from the vector store.
-            if request.use_memory and request.session_id: 
+            if request.use_memory and request.session_id:
                 chain = chain_manager.get_conversational_chain(request.session_id, search_filter=search_filter)
                 result = chain.invoke({"question": request.question})
                 answer = result.get("answer", "")
                 sources = [doc.page_content for doc in result.get("source_documents", [])]
+                # Persist this turn so the session survives restarts / chain eviction.
+                if answer:
+                    try:
+                        from database import save_chat_turn
+                        save_chat_turn(request.session_id, request.question, answer)
+                    except Exception as exc:
+                        logger.warning("Could not persist chat turn for %s: %s", request.session_id, exc)
             else:
                 chain = chain_manager.get_qa_chain(search_filter=search_filter)
                 result = chain.invoke({"query": request.question})
                 answer = result.get("result", result.get("answer", ""))
                 sources = [doc.page_content for doc in result.get("source_documents", [])]
 
-            # Debug logs to inspect the raw AI result and the retrieved sources, which can help in understanding how the smart metadata router is influencing the results.
-            if request.use_memory and request.session_id:
-                chain = chain_manager.get_conversational_chain(request.session_id, search_filter=search_filter)
-                result = chain.invoke({"question": request.question})
-                print("🤖 RAW AI RESULT:", result)  
-                answer = result.get("answer", "")
-                sources = [doc.page_content for doc in result.get("source_documents", [])]
-                print("🔍 Retrieved sources:", sources) 
+            # Debug logging using the result from the single invocation above.
+            # The previous debug block re-invoked the chain, doubling LLM cost
+            # and writing an extra turn to conversation memory. Reuse result here.
+            logger.debug("RAW AI RESULT: %s", result)
+            logger.debug("Retrieved sources: %s", sources)
 
             # Return the AI's answer along with the sources it used. The frontend can use this information to display the answer and optionally show the sources to the user for transparency.
             return ChatResponse(
@@ -122,12 +136,42 @@ def chat(request: ChatRequest):
 
 # The /sync endpoint allows us to upload new documents to the vector store. It accepts a SyncRequest containing a list of documents, which are then added to the ChromaDB vector store. This endpoint is typically used after uploading new reviews from a CSV file, and it ensures that the vector store is updated with the latest data for accurate retrieval during chat interactions. The endpoint also includes error handling to catch any issues during the syncing process and returns an appropriate HTTP response in case of failure.
 @app.post("/sync")
-async def sync_documents(request: SyncRequest):
+async def sync_documents(
+    request: SyncRequest,
+    x_api_key: Optional[str] = Header(default=None),
+):
+    # Authenticate the caller when a SYNC_API_KEY is configured.
+    # CORS only restricts browser clients; direct HTTP callers bypass it entirely.
+    if _SYNC_API_KEY is not None and x_api_key != _SYNC_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Api-Key header.")
+
+    # Cap the number of documents to prevent memory exhaustion.
+    if len(request.documents) > _MAX_DOCS_PER_SYNC:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Too many documents. Maximum allowed per request is {_MAX_DOCS_PER_SYNC}.",
+        )
+
+    # Validate per-document page_content length.
+    for idx, doc in enumerate(request.documents):
+        content = doc.get("page_content", "")
+        if not isinstance(content, str):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Document at index {idx}: page_content must be a string.",
+            )
+        if len(content) > _MAX_CONTENT_LENGTH:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Document at index {idx}: page_content exceeds the maximum "
+                    f"length of {_MAX_CONTENT_LENGTH} characters."
+                ),
+            )
+
     try:
-        # We call the add_documents method of the VectorStoreManager to add the new documents to ChromaDB. This method also handles clearing old documents to prevent duplicates. If the syncing process is successful, we return a success message along with the count of added documents. 
         chain_manager.vector_store_manager.add_documents(request.documents)
         return {"status": "success", "added_count": len(request.documents)}
     except Exception as e:
-        # If there is an error during syncing (e.g., issues with ChromaDB, invalid document format), we log the exception and return a 500 Internal Server Error response with the error details.
         logger.exception("Sync failed")
         raise HTTPException(status_code=500, detail=str(e))
