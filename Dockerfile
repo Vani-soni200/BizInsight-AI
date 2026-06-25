@@ -74,13 +74,29 @@ COPY . .
 # and the app crashes trying to open a directory as a database).
 RUN mkdir -p /data && ln -sf /data/bizinsight.db /app/bizinsight.db
 
+# Pre-create /app/chroma_db so it exists in the image *before* the
+# corresponding volume is mounted onto it. Docker initializes a fresh
+# named volume's ownership from whatever already exists at that path in
+# the image -- if nothing exists there, the volume mounts as root-owned
+# and the non-root appuser below can't write to it (ChromaDB would fail
+# to persist embeddings at runtime).
+RUN mkdir -p /app/chroma_db
+
 # Run as a non-root user. By default containers run as root, which is
 # unnecessary privilege for a Streamlit app and a real risk if any
-# dependency has an exploitable vulnerability. /app and /data need to
-# be writable by this user (app code dir + the SQLite/Chroma data dirs);
-# the NLTK/HuggingFace caches under /usr/local/share are root-owned but
-# world-readable (755), so no extra chown is needed there.
-RUN useradd -u 10001 -m appuser && chown -R appuser:appuser /app /data
+# dependency has an exploitable vulnerability.
+#
+# chown covers:
+#  - /app, /data: app code + writable data dirs (DB, chroma_db)
+#  - $NLTK_DATA, $HF_HOME: the pre-downloaded caches are root-owned from
+#    the build steps above. Reading cached files works fine under the
+#    default 755 permissions, but huggingface_hub also writes a small
+#    per-file *lock* into a ".locks/" subfolder of the cache root on
+#    every load (even when the file is already cached, as part of its
+#    normal concurrent-access safety mechanism) -- that's a write to the
+#    cache root itself, which a non-owner can't do without this chown.
+RUN useradd -u 10001 -m appuser \
+    && chown -R appuser:appuser /app /data "$NLTK_DATA" "$HF_HOME"
 USER appuser
 
 # Streamlit's default port
