@@ -227,6 +227,33 @@ Start the Streamlit dashboard:
 ```bash
 streamlit run app.py
 ```
+---
+
+## 🐳 Run with Docker
+
+You can run BizInsight AI in a container with no local Python setup.
+
+### 1. Set your API key
+Either create a `.env` file in the project root:
+```bash
+echo "OPENROUTER_API_KEY=your_api_key_here" >> .env
+```
+or export it directly in your shell (useful for CI/CD or production):
+```bash
+export OPENROUTER_API_KEY=your_api_key_here
+```
+
+### 2. Build and start the app
+```bash
+docker compose up --build
+```
+
+The dashboard will be available at **http://localhost:8501**.
+
+### Notes
+- Customer feedback data and vector embeddings are stored in Docker-managed named volumes, so they persist across `docker compose down` / `up` and rebuilds. To fully reset, run `docker compose down -v`.
+- The first build installs several large ML dependencies (PyTorch, Transformers, ChromaDB, etc.) and can take a while — subsequent builds are cached and much faster.
+- To stop the app: `docker compose down`
 
 ---
 
