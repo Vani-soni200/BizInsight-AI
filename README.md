@@ -233,9 +233,14 @@ streamlit run app.py
 
 You can run BizInsight AI in a container with no local Python setup.
 
-### 1. Create your `.env` file (if you haven't already)
+### 1. Set your API key
+Either create a `.env` file in the project root:
 ```bash
 echo "OPENROUTER_API_KEY=your_api_key_here" >> .env
+```
+or export it directly in your shell (useful for CI/CD or production):
+```bash
+export OPENROUTER_API_KEY=your_api_key_here
 ```
 
 ### 2. Build and start the app

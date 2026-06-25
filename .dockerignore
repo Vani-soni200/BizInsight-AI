@@ -20,3 +20,7 @@ docs/
 *.log
 chroma_db/
 models/
+.streamlit/secrets.toml
+.vscode/
+.DS_Store
+Thumbs.db
