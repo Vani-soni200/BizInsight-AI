@@ -17,5 +17,5 @@ assignees: ''
 A clear description of what section of the codebase needs cleaning up or documenting (e.g., `rag_api/`, `clustering/`, `app.py`, `database.py`, `requirements.txt`, etc.).
 
 ### Why this is helpful
-<!-- Do not exaggerate, use simple langauge -->
+<!-- Do not exaggerate, use simple language -->
 Explain how this will help future GSSoC contributors or make the BizInsight-AI customer analytics pipeline easier to understand and maintain.
