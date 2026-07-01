@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from forecasting import forecast_sentiment
 
 from email_alerts import send_negative_alert
+from aspect_extractor import extract_aspects
 
 load_dotenv()
 logging.basicConfig(level=logging.ERROR)
@@ -108,10 +109,22 @@ tabs = st.tabs(["📊 Dashboard", "🤖 AI Assistant", "📂 Data Upload", "⚙ 
 
 
 # ================= FUNCTIONS =================
+initialize_database()
 
+if no_users_exist():
+    show_setup_wizard()
+    st.stop()
+
+if not is_logged_in():
+    show_auth_page()
+    st.stop()
 # --- Email Alert State ---
+current_user = get_current_user()
+
 if "alert_email" not in st.session_state:
-    st.session_state.alert_email = current_user.get("email", "")
+    st.session_state.alert_email = (
+        current_user.get("email", "") if current_user else ""
+    )
 
 
 # ─── OpenAI Client ───────────────────────────────────────────────────────────
@@ -119,6 +132,37 @@ if "alert_email" not in st.session_state:
 
 def get_sentiment(text):
     return TextBlob(text).sentiment.polarity
+
+
+def ask_ai(question, reviews:list):
+    """Ask the configured OpenAI-compatible client for an answer using provided reviews."""
+    if client is None:
+        return "AI features are disabled because API key is missing."
+
+    # Build a concise prompt focusing on the reviews
+    reviews_text = "\n".join([str(r) for r in reviews[:200]])  # limit size
+    messages = [
+        {"role": "system", "content": "You are a concise business insights assistant. Answer only using the provided reviews."},
+        {"role": "user", "content": f"Customer Reviews:\n{reviews_text}\n\nQuestion:\n{question}\n\nProvide concise, actionable insights."}
+    ]
+
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=messages,
+            max_tokens=512,
+            temperature=0.2
+        )
+
+        # response structure may vary; try to extract content
+        if hasattr(resp, "choices") and len(resp.choices) > 0:
+            return resp.choices[0].message.get("content", "")
+        # fallback
+        return str(resp)
+
+    except Exception as e:
+        logger.error("AI request failed: %s", e)
+        return f"AI request failed: {e}"
 
 
 # ================= AI ASSISTANT =================
@@ -172,8 +216,11 @@ with tabs[1]:
 
         else:
 
-            data = fetch_feedback()
-
+            if current_user["workspace_type"] == "corporate":
+                data = get_workspace_feedback(current_user["workspace_id"])
+            else:
+                data = fetch_feedback(user_id=current_user["id"])
+            
             if not data:
                 st.warning("No feedback data available.")
 
@@ -191,170 +238,16 @@ with tabs[1]:
                 prompt = f"""
 You are a business intelligence assistant.
 
-def send_alert_email(recipient_email, subject, body):
-    """Sends an email alert regarding sentiment spikes."""
-    try:
-        sender_email = st.secrets["email_credentials"]["sender_email"]
-        password = st.secrets["email_credentials"]["app_password"]
-    except (KeyError, FileNotFoundError):
-        st.error("Email credentials not found in secrets. Cannot send alert.")
-        return False
-
-    if not recipient_email:
-        st.warning("Alert email recipient not set. Skipping email notification.")
-        return False
-
-    message = MIMEMultipart()
-    message["From"] = sender_email
-    message["To"] = recipient_email
-    message["Subject"] = subject
-    message.attach(MIMEText(body, "plain"))
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(sender_email, password)
-            server.sendmail(sender_email, recipient_email, message.as_string())
-        st.success(f"Negative sentiment alert sent to {recipient_email}!")
-        return True
-    except Exception as e:
-        st.error(f"Failed to send email: {e}")
-        return False
-
-def clean_text_for_sentiment(text):
-    text = text.lower()
-    text = re.sub(r'\d+', '', text)
-    text = re.sub(r'#', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-def ask_ai(question, reviews):
-    context = "\n".join(reviews[:40])
-
-    prompt = f"""You are a business intelligence assistant.
-
-
-# ================= AI ASSISTANT =================
-
-with tabs[1]:
-
-    st.subheader("🤖 AI Business Assistant")
-
-    question = st.text_area(
-        "Ask business insights question",
-        placeholder="Example: What are the major customer complaints?"
-    )
-
-    if st.button("Generate AI Insight"):
-
-        if client is None:
-            st.warning("AI features unavailable because API key is missing.")
-
-        elif question.strip() == "":
-            st.warning("Please enter a question.")
-
-        else:
-
-            data = fetch_feedback()
-
-            if not data:
-                st.warning("No feedback data available.")
-
-            else:
-
-                df_ai = pd.DataFrame(
-                    data,
-                    columns=["review", "sentiment", "date"]
-                )
-
-                MAX_REVIEWS_FOR_AI = 200
-                total_reviews_count = len(df_ai)
-                sampled_reviews = df_ai["review"].astype(str).tolist()[:MAX_REVIEWS_FOR_AI]
-                reviews_text = "\n".join(sampled_reviews)
-
-                prompt = f"""
-You are a business intelligence assistant.
-Analysing a sample of {len(sampled_reviews)} most recent reviews (out of {total_reviews_count} total).
-
-Customer reviews:
+Customer Reviews:
 {reviews_text}
 
 Question:
 {question}
+
+Answer the question only using the customer reviews.
+Provide concise and actionable business insights.
 """
 
-
-                try:
-
-                    response = client.chat.completions.create(
-                        model="openai/gpt-3.5-turbo",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "You provide business intelligence insights."
-                            },
-                            {
-                                "role": "user",
-                                "content": prompt
-                            }
-                        ],
-                        temperature=0.4
-                    )
-
-                    answer = response.choices[0].message.content
-
-                    # Save assistant response
-
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": answer
-                        }
-                    )
-                    st.rerun()
-
-                    # Show assistant response
-
-                     
-
-                except Exception as e:
-                    st.error(f"Error generating AI response: {str(e)}")
-
-    try:
-        response = client.chat.completions.create(
-            model="tngtech/deepseek-r1t2-chimera:free",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You provide business intelligence insights."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.4
-        )
-
-        return response.choices[0].message.content
-
-    except AuthenticationError:
-        return "Authentication failed."
-
-    except RateLimitError:
-        return "Rate limit exceeded."
-
-    except APITimeoutError:
-        return "Request timed out."
-
-    except APIConnectionError:
-        return "Connection error."
-
-    except APIError:
-        return "AI service unavailable."
-
-    except Exception as e:
-        return f"Error generating AI response: {str(e)}"
-    
 def make_pdf(df, trend, keywords):
     buffer = io.BytesIO()
     pdf = SimpleDocTemplate(buffer)
@@ -404,6 +297,8 @@ with tabs[2]:
 
     if uploaded_file:
 
+        file_hash = hashlib.md5(uploaded_file.read()).hexdigest()
+        uploaded_file.seek(0)
         df = pd.read_csv(uploaded_file)
 
 
@@ -434,6 +329,7 @@ with tabs[2]:
             else:
                 with st.spinner("Analyzing sentiment..."):
                     df["sentiment"] = df["review"].apply(get_sentiment)
+                    df["aspects"] = df["review"].apply(extract_aspects)
         if st.session_state.get("last_upload_hash") != file_hash:
             df = None
             encodings_to_try = ['utf-8', 'utf-16', 'latin1', 'cp1252']
@@ -481,7 +377,7 @@ with tabs[2]:
                     insert_feedback(
                         row["review"],
                         row["sentiment"],
-                        row["date"].strftime("%Y-%m-%d")
+                        pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
                     )
                     inserted_count += 1
                 if "review" not in df.columns:
@@ -499,6 +395,15 @@ with tabs[2]:
                         insert_feedback_bulk(reviews_data, user_id=current_user["id"])
                         st.session_state["last_upload_hash"] = file_hash
                         st.success(f"{len(df)} feedback entries successfully added!")
+                        df["aspects"] = df["review"].apply(extract_aspects)
+                        with st.expander("Detected Aspects"):
+
+                            preview_df = df[["review", "aspects"]].copy()
+
+                            st.dataframe(
+                                preview_df,
+                                use_container_width=True
+                            )
 
                         # Check for negative sentiment spike and send alert
                         new_negative_percent = round((df[df["sentiment"] < 0].shape[0] / df.shape[0]) * 100, 2)
@@ -510,7 +415,7 @@ with tabs[2]:
                                 f"Please log in to the BizInsight AI dashboard to analyze the feedback and take appropriate action.\n\n"
                                 f"Regards,\nThe BizInsight AI Team"
                             )
-                            send_alert_email(st.session_state.alert_email, subject, body)
+                            send_negative_alert(st.session_state.alert_email, subject, body)
 
         else:
 
@@ -536,18 +441,6 @@ with tabs[2]:
                     inserted_count += 1
 
                 st.success(f"{inserted_count} feedback entries successfully added!")
-
-# ================= FETCH DATA =================
-
-data = fetch_feedback()
-
-if data:
-
-    df = pd.DataFrame(
-        data,
-        columns=["review", "sentiment", "date"]
-    )
-
 
 if current_user["workspace_type"] == "corporate":
 
@@ -621,13 +514,8 @@ if not df.empty:
     reviews = df["review"].dropna()
 
     if reviews.empty or (
-
-        reviews.apply(lambda x: isinstance(x, str)).all() and
-        reviews.str.strip().eq("").all()
-
         reviews.apply(lambda x: isinstance(x, str)).all()
         and reviews.str.strip().eq("").all()
-
     ):
         keywords = []
         keyword_counts = []
@@ -1048,10 +936,5 @@ if not df.empty:
 
 else:
     st.info("Upload feedback to start building insights.")
-
-        if not all_feedback:
-            st.info("No feedback in the system yet.")
-        else:
-            df_all = pd.DataFrame(all_feedback, columns=["review", "sentiment", "date", "uploaded_by"])
-            st.dataframe(df_all, use_container_width=True)
+    st.info("No feedback in the system yet.")
 
